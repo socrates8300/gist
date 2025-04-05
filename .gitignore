@@ -8,8 +8,8 @@ target/
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
-gist.db
-./gist.db
+gists.db
+*/gists.db
 .DS_Store
 */.DS_Store
 
