@@ -1,0 +1,17 @@
+[package]
+name = "gist"
+version = "0.1.0"
+edition = "2021"
+authors = ["jamesr@ideasx.com"]
+description = "A simple CLI to store, search, update, and retrieve gists with AI-powered tagging."
+
+[dependencies]
+clap = { version = "4.1", features = ["derive"] }
+rusqlite = "0.29.0"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.11", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tempfile = "3.3"
+dir = "0.1.2"
+home = "0.5.11"
