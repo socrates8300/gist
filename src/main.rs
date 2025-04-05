@@ -26,7 +26,7 @@ struct Gist {
 //
 #[derive(Parser)]
 #[command(
-    author = "Your Name <you@example.com>",
+    author = "jamesr@ideasx.com",
     version = "0.1.0",
     about = "A simple CLI program to store, search, update, and retrieve gists with AI auto-tagging."
 )]
@@ -254,7 +254,7 @@ async fn get_tags(content: &str) -> Result<String, Box<dyn Error>> {
         "messages": [
             {
                 "role": "user",
-                "content": format!("Extract 3-5 relevant tags or keywords from this text, separated by commas: {}", content)
+                "content": format!("Extract 3-5 relevant tags, language, library or keywords from this text, separated by commas: {}", content)
             }
         ],
         "temperature": 0.1
