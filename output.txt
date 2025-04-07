@@ -1,0 +1,493 @@
+### ./src/main.rs
+
+```rust
+#![allow(unused)]
+mod viewer;
+
+use crate::viewer;
+use chrono::{DateTime, Local};
+use clap::{CommandFactory, Parser, Subcommand};
+use colored::*;
+use rusqlite::{params, Connection, Result as SqlResult};
+use serde::{Deserialize, Serialize};
+use std::env;
+use std::error::Error;
+use std::fs;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use tempfile::NamedTempFile;
+use tokio;
+
+//
+// Data structures
+//
+struct Gist {
+    id: i64,
+    content: String,
+    tags: String,
+    created_at: String,
+}
+
+//
+// CLI definitions
+//
+#[derive(Parser)]
+#[command(
+    author = "jamesr@ideasx.com",
+    version = "0.2.0",
+    about = "✨ GistCLI - Store, Search & Tag Gists with AI ✨",
+    long_about = "Save code snippets, notes or text fragments with convenient AI-generated tags.\n\nExamples:\n  gistcli add\n  gistcli search async\n  gistcli view 42"
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Add a new gist entry (opens your $EDITOR)
+    Add,
+    /// Update an existing gist entry by ID
+    Update {
+        /// ID of the gist to update
+        id: i64,
+    },
+    /// Search gists by text or ID
+    Search {
+        /// Query string or gist ID
+        query: String,
+    },
+    /// View a gist by ID
+    View {
+        /// Gist ID
+        id: i64,
+    },
+    /// List all saved gists
+    List,
+    UI,
+}
+
+//
+// OpenRouter API structs (unchanged)
+//
+#[derive(Serialize)]
+struct ChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    temperature: f32,
+}
+#[derive(Serialize)]
+struct ChatMessage {
+    role: String,
+    content: String,
+}
+#[derive(Deserialize)]
+struct ChatResponse {
+    choices: Vec<ChatChoice>,
+}
+#[derive(Deserialize)]
+struct ChatChoice {
+    message: ChatMessageResponse,
+}
+#[derive(Deserialize)]
+struct ChatMessageResponse {
+    role: String,
+    content: String,
+}
+
+//
+// Config directory
+//
+fn get_gist_dir() -> Result<PathBuf, Box<dyn Error>> {
+    if let Ok(dir) = env::var("GIST_DIR") {
+        let path = PathBuf::from(&dir);
+        fs::create_dir_all(&path)?;
+        return Ok(path);
+    }
+
+    if let Some(home) = home::home_dir() {
+        let path = home.join(".config").join("gistcli");
+        fs::create_dir_all(&path)?;
+        return Ok(path);
+    }
+
+    Err("Could not determine config dir ($GIST_DIR unset, no home dir found)".into())
+}
+
+fn init_db() -> Result<Connection, Box<dyn Error>> {
+    let dir = get_gist_dir()?;
+    let db_path = dir.join("gists.db");
+    let conn = Connection::open(db_path)?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS gists (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            content TEXT NOT NULL,
+            tags TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )",
+        [],
+    )?;
+
+    Ok(conn)
+}
+
+//
+// Open Editor with fallback
+//
+fn edit_content(initial: Option<&str>) -> Result<String, Box<dyn Error>> {
+    let mut tmpfile = NamedTempFile::new()?;
+    if let Some(init) = initial {
+        tmpfile.write_all(init.as_bytes())?;
+    }
+    let path = tmpfile.path();
+
+    // Use $EDITOR preference
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "nvim".into());
+
+    let status = Command::new(editor).arg(path).status()?;
+
+    if !status.success() {
+        return Err("Editor exited with error".into());
+    }
+
+    let mut buf = String::new();
+    fs::File::open(path)?.read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
+//
+// DB operations (same with better error propagation)
+//
+fn insert_gist(conn: &Connection, content: &str, tags: &str) -> SqlResult<i64> {
+    conn.execute(
+        "INSERT INTO gists (content, tags) VALUES (?1, ?2)",
+        params![content, tags],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+fn update_gist(conn: &Connection, id: i64, content: &str, tags: &str) -> SqlResult<()> {
+    conn.execute(
+        "UPDATE gists SET content = ?1, tags = ?2 WHERE id = ?3",
+        params![content, tags, id],
+    )?;
+    Ok(())
+}
+
+fn get_gist(conn: &Connection, id: i64) -> SqlResult<Gist> {
+    conn.query_row(
+        "SELECT id, content, tags, created_at FROM gists WHERE id = ?1",
+        params![id],
+        |row| {
+            Ok(Gist {
+                id: row.get(0)?,
+                content: row.get(1)?,
+                tags: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        },
+    )
+}
+
+fn search_gists(conn: &Connection, query: &str) -> SqlResult<Vec<Gist>> {
+    let like = format!("%{}%", query);
+    let mut stmt = conn.prepare(
+        "SELECT id, content, tags, created_at 
+         FROM gists WHERE content LIKE ?1 OR tags LIKE ?1 
+         ORDER BY created_at DESC",
+    )?;
+
+    let iter = stmt.query_map(params![like], |row| {
+        Ok(Gist {
+            id: row.get(0)?,
+            content: row.get(1)?,
+            tags: row.get(2)?,
+            created_at: row.get(3)?,
+        })
+    })?;
+
+    let mut gists = vec![];
+    for g in iter {
+        gists.push(g?);
+    }
+    Ok(gists)
+}
+
+fn list_gists(conn: &Connection) -> SqlResult<Vec<Gist>> {
+    let mut stmt =
+        conn.prepare("SELECT id, content, tags, created_at FROM gists ORDER BY created_at DESC")?;
+
+    let iter = stmt.query_map([], |row| {
+        Ok(Gist {
+            id: row.get(0)?,
+            content: row.get(1)?,
+            tags: row.get(2)?,
+            created_at: row.get(3)?,
+        })
+    })?;
+
+    let mut gists = vec![];
+    for g in iter {
+        gists.push(g?);
+    }
+    Ok(gists)
+}
+
+async fn get_tags(content: &str) -> Result<String, Box<dyn Error>> {
+    let api_key = env::var("OPENROUTER_API_KEY").map_err(|_| "Missing OPENROUTER_API_KEY")?;
+
+    let body = serde_json::json!({
+        "model": "openai/gpt-4o",
+        "messages": [
+            {"role": "user", "content": format!(
+                "Extract 3-5 relevant tags, libraries, languages or keywords separated by commas:\n{}", content)}
+        ],
+        "temperature": 0.1,
+    });
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(20))
+        .build()?;
+
+    let resp = client
+        .post("https://openrouter.ai/api/v1/chat/completions")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await?;
+
+    if !resp.status().is_success() {
+        let msg = resp.text().await.unwrap_or_default();
+        return Err(format!("API error: {}", msg).into());
+    }
+
+    let json: ChatResponse = resp.json().await?;
+    if let Some(choice) = json.choices.first() {
+        Ok(choice.message.content.trim().to_string())
+    } else {
+        Err("No response choices from OpenRouter API".into())
+    }
+}
+
+/// Format created_at datetime
+fn format_datetime(ts: &str) -> String {
+    DateTime::parse_from_rfc3339(ts)
+        .or_else(|_| DateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S"))
+        .map(|dt| {
+            dt.with_timezone(&Local)
+                .format("%Y-%m-%d %H:%M")
+                .to_string()
+        })
+        .unwrap_or_else(|_| ts.to_owned())
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn Error>> {
+    let cli = Cli::parse();
+    let conn = init_db()?;
+
+    let db_path = get_gist_dir()?.join("gists.db");
+    println!(
+        "{}",
+        format!("🗄  Using DB: {}", db_path.display()).blue().bold()
+    );
+
+    match cli.command {
+        Commands::Add => {
+            println!("{}", "📝 Creating new gist...".yellow());
+            let content = edit_content(None)?;
+            if content.trim().is_empty() {
+                println!("{}", "Aborting: Empty content".red());
+                return Ok(());
+            }
+            let tags = match get_tags(&content).await {
+                Ok(t) => t,
+                Err(e) => {
+                    println!("{} {}", "⚠️  Could not generate tags:".red(), e);
+                    "untagged".to_string()
+                }
+            };
+            let id = insert_gist(&conn, &content, &tags)?;
+            println!(
+                "{} {} {}",
+                "✅ Gist saved with ID".green(),
+                id.to_string().bold(),
+                format!("({})", tags).cyan()
+            );
+        }
+        Commands::Update { id } => {
+            let gist = get_gist(&conn, id)?;
+            println!("{}", format!("✏️  Updating gist #{}", id).yellow());
+            let content = edit_content(Some(&gist.content))?;
+            if content.trim().is_empty() {
+                println!("{}", "Aborted: content empty".red());
+                return Ok(());
+            }
+            let new_tags = match get_tags(&content).await {
+                Ok(t) => t,
+                Err(_) => gist.tags.clone(),
+            };
+            update_gist(&conn, id, &content, &new_tags)?;
+            println!("{}", "✅ Gist updated!".green());
+        }
+        Commands::Ui => {
+            let all = list_gists(&conn)?;
+            viewer::run_ui(&all)?;
+        }
+        Commands::Search { query } => {
+            if let Ok(id) = query.parse::<i64>() {
+                match get_gist(&conn, id) {
+                    Ok(g) => display_gist(&g),
+                    Err(_) => println!("{}", format!("No gist found with ID {}", id).red()),
+                }
+            } else {
+                let hits = search_gists(&conn, &query)?;
+                if hits.is_empty() {
+                    println!("{}", format!("No results for '{}'", query).red());
+                } else {
+                    println!(
+                        "{}",
+                        format!("🔎 {} results for '{}':", hits.len(), query).cyan()
+                    );
+                    for g in hits {
+                        display_gist_preview(&g);
+                    }
+                }
+            }
+        }
+        Commands::View { id } => match get_gist(&conn, id) {
+            Ok(g) => display_gist(&g),
+            Err(_) => println!("{}", format!("No gist found with ID {}", id).red()),
+        },
+        Commands::List => {
+            let all = list_gists(&conn)?;
+            if all.is_empty() {
+                println!("{}", "No gists saved yet.".yellow());
+            } else {
+                println!("{}", format!("📚 Listing {} gists:", all.len()).cyan());
+                for g in all {
+                    display_gist_preview(&g);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Friendly gist display
+fn display_gist(gist: &Gist) {
+    println!(
+        "{} {}\n{} {}\n{} {}\n\n{}",
+        "ID:".bold(),
+        gist.id.to_string().green(),
+        "Created:".bold(),
+        gist.created_at,
+        "Tags:".bold(),
+        gist.tags.cyan(),
+        gist.content
+    );
+    println!("{}", "-".repeat(60).truecolor(100, 100, 100));
+}
+
+/// A short multi-line preview (first 3 lines)
+fn display_gist_preview(gist: &Gist) {
+    let preview = gist.content.lines().take(3).collect::<Vec<_>>().join(" ");
+    println!(
+        "{} {} {} {} {} {}\n{}",
+        "ID".bold(),
+        gist.id.to_string().green(),
+        "| Time:".bold(),
+        gist.created_at,
+        "| Tags:".bold(),
+        gist.tags.cyan(),
+        preview
+    );
+    println!("{}", "-".repeat(40).dimmed());
+}
+
+```
+
+### ./src/viewer.rs
+
+```rust
+use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::style::{Color, Style};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::{backend::CrosstermBackend, Terminal};
+
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+
+use std::{error::Error, io};
+
+pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    let mut selected = 0usize;
+
+    loop {
+        terminal.draw(|f| {
+            let chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                .split(f.size());
+
+            // Sidebar list
+            let items: Vec<_> = gists
+                .iter()
+                .map(|g| ListItem::new(format!("#{} {}", g.id, g.tags)))
+                .collect();
+
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL).title("Gists"))
+                .highlight_style(Style::default().bg(Color::Blue));
+
+            f.render_stateful_widget(
+                list,
+                chunks[0],
+                &mut ratatui::widgets::ListState::default().select(Some(selected)),
+            );
+
+            // Main content panel
+            let body = &gists[selected].content;
+            let para = Paragraph::new(body.clone())
+                .block(Block::default().borders(Borders::ALL).title("Content"));
+            f.render_widget(para, chunks[1]);
+        })?;
+
+        if crossterm::event::poll(std::time::Duration::from_millis(200))? {
+            match event::read()? {
+                Event::Key(key) => match key.code {
+                    KeyCode::Char('q') => break, // quit
+                    KeyCode::Down => selected = (selected + 1).min(gists.len() - 1),
+                    KeyCode::Up => selected = selected.saturating_sub(1),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture
+    )?;
+    terminal.show_cursor()?;
+
+    Ok(())
+}
+
+```
+
