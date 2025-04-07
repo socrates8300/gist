@@ -109,7 +109,7 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
             let bar_text = if state.is_searching {
                 format!("/ {}", state.search_query)
             } else {
-                "↑↓ or j/k Navigate  a:Add  e:Edit  s:Search  q:Quit".to_owned()
+                "↑↓ or j/k Navigate  a:Add  e:Edit  s or /:Search  q:Quit".to_owned()
             };
             let bar = Paragraph::new(bar_text).style(Style::default().fg(Color::Yellow));
             f.render_widget(bar, vert[1]);
@@ -138,7 +138,7 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
                 } else {
                     match key.code {
                         KeyCode::Char('q') => break,
-                        KeyCode::Char('s') => {
+                        KeyCode::Char('s') | KeyCode::Char('/') => {
                             state.is_searching = true;
                             state.search_query.clear();
                         }
