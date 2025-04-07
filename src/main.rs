@@ -1,3 +1,4 @@
+#![allow(unused)]
 mod viewer;
 
 use clap::{Parser, Subcommand};
