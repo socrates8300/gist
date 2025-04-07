@@ -1,6 +1,5 @@
 mod viewer;
 
-use chrono::{DateTime, Local};
 use clap::{Parser, Subcommand};
 use colored::*;
 use rusqlite::{params, Connection, Result as SqlResult};
@@ -10,7 +9,6 @@ use std::{
     error::Error,
     fs,
     io::{Read, Write},
-    path::PathBuf,
     process::Command,
 };
 use tempfile::NamedTempFile;
