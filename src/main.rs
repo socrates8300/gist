@@ -284,12 +284,12 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
 
         Commands::UI => {
-            let all = list_gists(&conn)?;
+            let mut all = list_gists(&conn)?;
             if all.is_empty() {
                 println!("No gists found. Add some first!");
                 return Ok(());
             }
-            viewer::run_ui(&all)?;
+            viewer::run_ui(&mut all)?;
         }
     }
     Ok(())

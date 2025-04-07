@@ -1,3 +1,5 @@
+use crate::Gist;
+use chrono::Local;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
@@ -11,12 +13,11 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Terminal,
 };
-use std::{error::Error, io};
+use std::{error::Error, io, process::Command};
 
-use crate::Gist;
-
-struct AppState<'a> {
-    all_gists: &'a [Gist],
+// ----- App state -----
+struct AppState {
+    all_gists: Vec<Gist>,
     filtered_gists: Vec<Gist>,
     selected: usize,
     list_state: ListState,
@@ -24,11 +25,11 @@ struct AppState<'a> {
     search_query: String,
 }
 
-impl<'a> AppState<'a> {
-    fn new(gists: &'a [Gist]) -> Self {
+impl AppState {
+    fn new(gists: Vec<Gist>) -> Self {
         let mut s = AppState {
+            filtered_gists: gists.clone(),
             all_gists: gists,
-            filtered_gists: gists.to_vec(),
             selected: 0,
             list_state: ListState::default(),
             is_searching: false,
@@ -37,22 +38,21 @@ impl<'a> AppState<'a> {
         s.list_state.select(Some(0));
         s
     }
-
-    fn reset_filter(&mut self) {
-        self.filtered_gists = self.all_gists.to_vec();
+    fn reload(&mut self) {
+        self.filtered_gists = self.all_gists.clone();
         self.selected = 0;
         self.list_state.select(Some(0));
+    }
+    fn reset_filter(&mut self) {
+        self.reload();
         self.search_query.clear();
     }
-
     fn do_search(&mut self) {
-        let text = self.search_query.to_lowercase();
+        let q = self.search_query.to_lowercase();
         self.filtered_gists = self
             .all_gists
             .iter()
-            .filter(|g| {
-                g.content.to_lowercase().contains(&text) || g.tags.to_lowercase().contains(&text)
-            })
+            .filter(|g| g.content.to_lowercase().contains(&q) || g.tags.to_lowercase().contains(&q))
             .cloned()
             .collect();
         self.selected = 0;
@@ -60,14 +60,15 @@ impl<'a> AppState<'a> {
     }
 }
 
-pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
+pub fn run_ui(gists_storage: &mut Vec<Gist>) -> Result<(), Box<dyn Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut state = AppState::new(gists);
+    let initial_data = gists_storage.clone();
+    let mut state = AppState::new(initial_data);
 
     loop {
         terminal.draw(|f| {
@@ -81,38 +82,35 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
                 .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
                 .split(vert[0]);
 
-            // List panel
-            let list_items: Vec<_> = state
+            let items: Vec<_> = state
                 .filtered_gists
                 .iter()
                 .map(|g| ListItem::new(format!("#{} {}", g.id, g.tags)))
                 .collect();
 
-            let list = List::new(list_items)
+            let list = List::new(items)
                 .block(Block::default().borders(Borders::ALL).title("Gists"))
                 .highlight_style(Style::default().bg(Color::Blue));
 
             f.render_stateful_widget(list, chunks[0], &mut state.list_state);
 
-            // Content panel (avoid panic if no gist)
-            let content = if let Some(g) = state.filtered_gists.get(state.selected) {
-                g.content.as_str()
-            } else {
-                "(no gists)"
-            };
+            let content = state
+                .filtered_gists
+                .get(state.selected)
+                .map(|g| g.content.as_str())
+                .unwrap_or("(no gists)");
 
-            let para = Paragraph::new(content)
+            let paragraph = Paragraph::new(content)
                 .block(Block::default().borders(Borders::ALL).title("Content"));
 
-            f.render_widget(para, chunks[1]);
+            f.render_widget(paragraph, chunks[1]);
 
-            // Bottom bar: Help or Search
-            let bar_text = if state.is_searching {
+            let info = if state.is_searching {
                 format!("/ {}", state.search_query)
             } else {
-                "↑↓ or j/k Navigate  a:Add  e:Edit  s or /:Search  y:Yank/Copy q:Quit".to_owned()
+                "↑↓ j/k Navigate  a:Add  e:Edit  y:Yank  s or /:Search  q:Quit".to_string()
             };
-            let bar = Paragraph::new(bar_text).style(Style::default().fg(Color::Yellow));
+            let bar = Paragraph::new(info).style(Style::default().fg(Color::Yellow));
             f.render_widget(bar, vert[1]);
         })?;
 
@@ -157,23 +155,57 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
                         }
                         KeyCode::Char('y') => {
                             if let Some(gist) = state.filtered_gists.get(state.selected) {
-                                match clipboard::ClipboardContext::new() {
-                                    Ok(mut ctx) => {
-                                        if ctx.set_contents(gist.content.clone()).is_ok() {
-                                            println!("Gist copied to clipboard");
-                                        } else {
-                                            println!("Could not copy gist content to clipboard");
-                                        }
-                                    }
-                                    Err(_) => println!("Clipboard unavailable"),
+                                if let Ok(mut ctx) = ClipboardContext::new() {
+                                    let _ = ctx.set_contents(gist.content.clone());
                                 }
                             }
                         }
                         KeyCode::Char('a') => {
-                            println!("(Add not yet implemented)");
+                            disable_raw_mode()?;
+                            let tmp = std::env::temp_dir().join("gist_new.txt");
+                            let _ = Command::new("nvim").arg(&tmp).status();
+                            let content = std::fs::read_to_string(&tmp).unwrap_or_default();
+                            std::fs::remove_file(&tmp).ok();
+                            if content.trim().is_empty() {
+                                enable_raw_mode()?;
+                                continue;
+                            }
+                            let created_at = Local::now().to_rfc3339();
+                            let new_id =
+                                state.all_gists.iter().map(|g| g.id).max().unwrap_or(0) + 1;
+                            let new_gist = Gist {
+                                id: new_id,
+                                tags: "".to_string(),
+                                content,
+                                created_at,
+                            };
+                            state.all_gists.push(new_gist.clone());
+                            gists_storage.push(new_gist);
+                            enable_raw_mode()?;
+                            state.reload();
                         }
                         KeyCode::Char('e') => {
-                            println!("(Edit not yet implemented)");
+                            if let Some(gist) = state.filtered_gists.get(state.selected) {
+                                disable_raw_mode()?;
+                                let tmp = std::env::temp_dir().join("gist_edit.txt");
+                                let _ = std::fs::write(&tmp, &gist.content);
+                                let _ = Command::new("nvim").arg(&tmp).status();
+                                let updated = std::fs::read_to_string(&tmp).unwrap_or_default();
+                                std::fs::remove_file(&tmp).ok();
+                                if updated.trim().is_empty() {
+                                    enable_raw_mode()?;
+                                    continue;
+                                }
+                                // update in full list
+                                for g in gists_storage.iter_mut() {
+                                    if g.id == gist.id {
+                                        g.content = updated.clone();
+                                    }
+                                }
+                                enable_raw_mode()?;
+                                state.all_gists = gists_storage.clone();
+                                state.do_search();
+                            }
                         }
                         _ => {}
                     }
@@ -181,7 +213,6 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
             }
         }
     }
-
     disable_raw_mode()?;
     execute!(
         terminal.backend_mut(),
