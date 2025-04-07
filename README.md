@@ -1,84 +1,103 @@
-# Gist CLI
+# 🌟 **Gist CLI**
 
-A powerful command-line tool for storing, searching, updating, and retrieving text snippets (gists) with AI-powered automatic tagging.
+A modern, AI-powered command-line **and interactive terminal app** for managing text snippets (“gists”):
 
-## Features
+- save  
+- search  
+- edit  
+- **auto-tag with OpenRouter AI**
 
-- Store text snippets in a local SQLite database
-- Edit gists using Neovim
-- Automatically generate tags using OpenRouter AI
-- Search for gists by content or tags
-- Quick ID lookup via search command
-- List all gists with previews
-- View complete gist content
+all in a fast, minimal local database.
 
-## Installation
+---
+
+## 🚀 Features
+
+- **Store & organize** any text snippet in SQLite
+- **Edit** via [Neovim](https://neovim.io) for a smooth workflow
+- **Rich terminal UI:**  
+  - browse  
+  - Vim & arrow key navigation  
+  - inline content view  
+  - live **fuzzy search** filter
+- **AI-powered tagging** using [OpenRouter](https://openrouter.ai)
+- **Search by text or tags**
+- View by ID or list with previews
+- Fully local first, fast, no cloud lock-in
+- Works standalone or as your snippet vault with optional AI
+
+---
+
+## 🛠️ Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/yourusername/gist-cli.git
 cd gist-cli
 
-# Build and install
 cargo build --release
 cargo install --path .
 ```
 
-## Usage
+Then you can run the CLI commands or launch the TUI:
 
 ```bash
-# Add a new gist (opens nvim)
-gist add
-
-# Update an existing gist by ID
-gist update 1
-
-# Search gists by query
-gist search "rust async"
-
-# Quick lookup by ID (shorthand for view)
-gist search 1
-
-# View a gist by ID
-gist view 1
-
-# List all gists
-gist list
+gist ui
 ```
 
-## API Configuration
+---
 
-This application uses the OpenRouter API for generating tags. To use this feature:
+## ⚡ Usage
 
-1. Get an API key from [OpenRouter](https://openrouter.ai)
-2. Set it as an environment variable:
+```bash
+# Add a new snippet (opens in Neovim)
+gist add
+
+# Update existing by ID
+gist update 1
+
+# Search snippets by query text/tags
+gist search "rust async traits"
+
+# Quick lookup by ID (shortcut)
+gist search 1
+
+# View full snippet content
+gist view 1
+
+# List all snippets with preview lines
+gist list
+
+# Launch interactive TUI (keyboard help built-in)
+gist ui
+```
+
+---
+
+## 🤖 AI Tagging Setup
+
+**Optional but recommended** for generating meaningful tags:
+
+1. Sign up at [OpenRouter.ai](https://openrouter.ai)  
+2. Generate your API key  
+3. Set environment variable:
 
 ```bash
 export OPENROUTER_API_KEY=your_api_key_here
 ```
 
-If the API key is not set or if there are connectivity issues, gists will be tagged as "untagged".
+- If unset/unreachable, snippets will be tagged as `"untagged"`
+- Tagging runs asynchronously and won’t block your note flow
 
-## Technical Implementation
+---
 
-The application is built with a focus on performance, memory safety, and robust error handling:
+## 💾 Data Storage
 
-- **SQLite Storage**: Persistent, local storage of all gists with metadata
-- **Rust Concurrency**: Uses Tokio for asynchronous API requests
-- **Error Propagation**: Comprehensive error handling that provides informative feedback
-- **Temporary Files**: Secure file handling for editor integration
-- **JSON Processing**: Type-safe serialization/deserialization for API communication
+- All snippets stored **locally** in an SQLite database
+- **Primary key:** standard SQLite auto-increment integer (integer type strictly stores numeric values ensuring data integrity [[neon.tech](https://neon.tech/docs/data-types/integer)], [sqlite.org](https://www.sqlite.org/lang_createtable.html))
+- Fast, atomic reads/writes without server setup
+- Supports fuzzy search on both **content and tags**
 
-## Dependencies
-
-- `clap`: Command-line argument parsing
-- `rusqlite`: SQLite database operations
-- `reqwest`: HTTP client for API requests
-- `tokio`: Asynchronous runtime
-- `serde`: JSON serialization/deserialization
-- `tempfile`: Secure temporary file handling
-
-## Database Schema
+### Example DB schema:
 
 ```sql
 CREATE TABLE IF NOT EXISTS gists (
@@ -86,29 +105,76 @@ CREATE TABLE IF NOT EXISTS gists (
     content    TEXT NOT NULL,
     tags       TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-)
+);
 ```
 
-## Development
+---
 
-### Prerequisites
+## 🔧 Implementation notes
 
-- Rust toolchain (1.56.0 or later)
-- Neovim text editor
-- SQLite
+- Rust with performance and safety
+- **SQLite** for embedded zero-config storage
+- Async **Tokio** + **Reqwest** for non-blocking network
+- Native terminal UI via **Ratatui** with Vim-like navigation (arrows+`j/k`)
+- Uses **temporary files** with your editor (Neovim default, configurable)
+- Precise error handling and safe concurrency
+- Supports any API-compatible AI provider with minor changes
 
-### Building from Source
+---
+
+## 📦 Dependencies
+
+- [clap](https://crates.io/crates/clap) — CLI argument parser
+- [rusqlite](https://crates.io/crates/rusqlite) — SQLite DB
+- [reqwest](https://crates.io/crates/reqwest) — async HTTP
+- [tokio](https://crates.io/crates/tokio) — async runtime
+- [serde](https://crates.io/crates/serde) — JSON handling
+- [tempfile](https://crates.io/crates/tempfile) — secure temp files
+- [ratatui](https://crates.io/crates/ratatui) — terminal UI
+
+---
+
+## 🖥️ Development
+
+### Requirements
+
+- Latest stable **Rust** (>1.56)
+- Neovim (or configure to use `vim`)
+- SQLite3 installed
+- Optional: OpenRouter API key for tagging
+
+### Build steps
 
 ```bash
 cargo build --release
 ```
 
-The binary will be available at `target/release/gist`.
+**Run CLI:**
 
-## Contributing
+```bash
+target/release/gist ...commands...
+```
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+---
 
-## License
+## 🤝 Contributing
 
-MIT License
+Contributions, feature ideas, and PRs **welcome!**
+
+Please:
+
+- Open issues for bugs
+- Fork and PR on GitHub
+- Write clear commit messages
+- Follow Rust formatting (`cargo fmt`)
+
+---
+
+## 📝 License
+
+[MIT](./LICENSE)
+
+---
+
+### Enjoy a **fast, smart, developer-oriented snippet manager** – with blazing terminal UI and AI smarts!
+
