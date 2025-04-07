@@ -109,7 +109,7 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
             let bar_text = if state.is_searching {
                 format!("/ {}", state.search_query)
             } else {
-                "↑↓ Navigate  a:Add  e:Edit  s:Search  q:Quit".to_owned()
+                "↑↓ or j/k Navigate  a:Add  e:Edit  s:Search  q:Quit".to_owned()
             };
             let bar = Paragraph::new(bar_text).style(Style::default().fg(Color::Yellow));
             f.render_widget(bar, vert[1]);
@@ -142,13 +142,13 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
                             state.is_searching = true;
                             state.search_query.clear();
                         }
-                        KeyCode::Down => {
+                        KeyCode::Down | KeyCode::Char('j') => {
                             if state.selected + 1 < state.filtered_gists.len() {
                                 state.selected += 1;
                             }
                             state.list_state.select(Some(state.selected));
                         }
-                        KeyCode::Up => {
+                        KeyCode::Up | KeyCode::Char('k') => {
                             if state.selected > 0 {
                                 state.selected -= 1;
                             }
@@ -156,11 +156,9 @@ pub fn run_ui(gists: &[Gist]) -> Result<(), Box<dyn Error>> {
                         }
                         KeyCode::Char('a') => {
                             println!("(Add not yet implemented)");
-                            // Call your add logic here
                         }
                         KeyCode::Char('e') => {
                             println!("(Edit not yet implemented)");
-                            // Call your edit logic here
                         }
                         _ => {}
                     }
