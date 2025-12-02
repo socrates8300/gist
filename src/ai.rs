@@ -49,15 +49,19 @@ pub async fn get_tags(content: &str, config: &Config) -> Result<String, Box<dyn 
 
     // Try using API if key is available
     if let Some(key) = &config.tag_api_key {
+        let model = config.ai_model.as_deref().unwrap_or("openai/gpt-4o");
+        let base_url = config.ai_base_url.as_deref().unwrap_or("https://openrouter.ai/api/v1");
+        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+
         let reqbody = serde_json::json!({
-            "model": "openai/gpt-4o",
+            "model": model,
             "messages": [{"role":"user","content":format!("Extract 3-5 relevant tags separated by commas:\n{}",content)}],
-            "temperature":0.1,
+            "temperature": 0.1,
         });
         
         let client = reqwest::Client::new();
         let response = client
-            .post("https://openrouter.ai/api/v1/chat/completions")
+            .post(&url)
             .header("Authorization", format!("Bearer {}", key))
             .json(&reqbody)
             .send()

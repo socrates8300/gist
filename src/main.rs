@@ -9,6 +9,10 @@ mod utils;
 use clap::{Parser, Subcommand};
 use colored::*;
 use std::{error::Error, path::PathBuf, io::Write};
+use syntect::easy::HighlightLines;
+use syntect::parsing::SyntaxSet;
+use syntect::highlighting::{ThemeSet, Style};
+use syntect::util::{as_24_bit_terminal_escaped, LinesWithEndings};
 use crate::models::{Gist, Theme};
 use crate::config::{load_config, save_config, Config};
 use crate::db::*;
@@ -117,6 +121,14 @@ enum Commands {
         /// Set theme (dark/light/system)
         #[arg(long)]
         theme: Option<String>,
+
+        /// Set AI model (e.g., openai/gpt-4o)
+        #[arg(long)]
+        ai_model: Option<String>,
+
+        /// Set AI base URL
+        #[arg(long)]
+        ai_base_url: Option<String>,
         
         /// Show current configuration
         #[arg(short, long)]
@@ -133,15 +145,48 @@ fn print_success(message: &str) {
 
 fn display_gist(g: &Gist) {
     println!(
-        "{} {}\n{} {}\n{} {}\n\n{}",
+        "{} {}\n{} {}\n{} {}\n",
         "ID:".bold(),
         g.id.to_string().green(),
         "Created:".bold(),
         g.created_at,
         "Tags:".bold(),
         g.tags.cyan(),
-        g.content
     );
+
+    // Syntax highlighting
+    let ps = SyntaxSet::load_defaults_newlines();
+    let ts = ThemeSet::load_defaults();
+    
+    // Determine syntax from tags or content
+    let syntax = if g.tags.to_lowercase().contains("rust") {
+        ps.find_syntax_by_extension("rs").unwrap()
+    } else if g.tags.to_lowercase().contains("python") {
+        ps.find_syntax_by_extension("py").unwrap()
+    } else if g.tags.to_lowercase().contains("javascript") || g.tags.to_lowercase().contains("js") {
+        ps.find_syntax_by_extension("js").unwrap()
+    } else if g.tags.to_lowercase().contains("html") {
+        ps.find_syntax_by_extension("html").unwrap()
+    } else if g.tags.to_lowercase().contains("css") {
+        ps.find_syntax_by_extension("css").unwrap()
+    } else if g.tags.to_lowercase().contains("sql") {
+        ps.find_syntax_by_extension("sql").unwrap()
+    } else if g.tags.to_lowercase().contains("sh") || g.tags.to_lowercase().contains("bash") {
+        ps.find_syntax_by_extension("sh").unwrap()
+    } else {
+        ps.find_syntax_by_first_line(&g.content).unwrap_or_else(|| ps.find_syntax_plain_text())
+    };
+
+    let mut h = HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]);
+    
+    for line in LinesWithEndings::from(&g.content) {
+        let ranges: Vec<(Style, &str)> = h.highlight_line(line, &ps).unwrap();
+        let escaped = as_24_bit_terminal_escaped(&ranges[..], false);
+        print!("{}", escaped);
+    }
+    // Reset colors
+    println!("\x1b[0m");
+    
     println!("{}", "-".repeat(50).dimmed());
 }
 
@@ -411,7 +456,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         },
         
-        Commands::Config { editor, auto_tags, api_key, theme, show } => {
+        Commands::Config { editor, auto_tags, api_key, theme, ai_model, ai_base_url, show } => {
             let mut config = load_config();
             
             if show {
@@ -421,6 +466,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 println!("  {}: {}", "Auto-generate tags".bold(), config.auto_generate_tags);
                 println!("  {}: {}", "Default tags".bold(), config.default_tags.join(", "));
                 println!("  {}: {}", "API Key".bold(), config.tag_api_key.map(|_| "(set)".to_string()).unwrap_or_else(|| "(not set)".dimmed().to_string()));
+                println!("  {}: {}", "AI Model".bold(), config.ai_model.unwrap_or_default());
+                println!("  {}: {}", "AI Base URL".bold(), config.ai_base_url.unwrap_or_default());
                 return Ok(());
             }
             
@@ -452,6 +499,16 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     }
                 };
                 config.theme = new_theme;
+                changed = true;
+            }
+
+            if let Some(model) = ai_model {
+                config.ai_model = Some(model);
+                changed = true;
+            }
+
+            if let Some(url) = ai_base_url {
+                config.ai_base_url = Some(url);
                 changed = true;
             }
             
