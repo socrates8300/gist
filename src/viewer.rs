@@ -1,4 +1,7 @@
-use crate::{Config, Gist, Theme, delete_gist, get_gist, insert_gist, update_gist};
+use crate::models::{Gist, Theme};
+use crate::config::Config;
+use crate::db::{delete_gist, get_gist, insert_gist, update_gist, list_gists};
+use crate::ai::get_tags;
 use chrono::Local;
 use clipboard::{ClipboardContext, ClipboardProvider};
 use colored::Colorize;
@@ -558,23 +561,34 @@ pub fn run_ui(
                                 // Add new gist
                                 disable_raw_mode()?;
                                 let tmp = std::env::temp_dir().join("gist_new.txt");
-                                let editor = if state.config.editor.is_empty() {
+                                let editor_cmd = if state.config.editor.is_empty() {
                                     "nvim".to_string()
                                 } else {
                                     state.config.editor.clone()
                                 };
-                                let _ = Command::new(&editor).arg(&tmp).status();
+                                let mut parts = editor_cmd.split_whitespace();
+                                let command = parts.next().unwrap_or("vi");
+                                let args: Vec<&str> = parts.collect();
+                                
+                                let _ = Command::new(command).args(&args).arg(&tmp).status();
                                 if let Ok(content) = std::fs::read_to_string(&tmp) {
                                     let _ = std::fs::remove_file(&tmp);
                                     if !content.trim().is_empty() {
                                         // Add in background
                                         let db_sender = db_tx.clone();
                                         let sender = tx.clone();
-                                        thread::spawn(move || {
+                                        let config = state.config.clone();
+                                        
+                                        tokio::spawn(async move {
+                                            let tags = match get_tags(&content, &config).await {
+                                                Ok(t) => t,
+                                                Err(_) => config.default_tags.join(", "),
+                                            };
+
                                             let (response_tx, response_rx) = mpsc::channel();
                                             let _ = db_sender.send(DbOperation::Add(
                                                 content, 
-                                                "".to_string(), 
+                                                tags, 
                                                 response_tx
                                             ));
                                             
@@ -601,12 +615,16 @@ pub fn run_ui(
                                     disable_raw_mode()?;
                                     let tmp = std::env::temp_dir().join("gist_edit.txt");
                                     let _ = std::fs::write(&tmp, &gist.content);
-                                    let editor = if state.config.editor.is_empty() {
+                                    let editor_cmd = if state.config.editor.is_empty() {
                                         "nvim".to_string()
                                     } else {
                                         state.config.editor.clone()
                                     };
-                                    let _ = Command::new(&editor).arg(&tmp).status();
+                                    let mut parts = editor_cmd.split_whitespace();
+                                    let command = parts.next().unwrap_or("vi");
+                                    let args: Vec<&str> = parts.collect();
+
+                                    let _ = Command::new(command).args(&args).arg(&tmp).status();
                                     if let Ok(updated) = std::fs::read_to_string(&tmp) {
                                         let _ = std::fs::remove_file(&tmp);
                                         if !updated.trim().is_empty() && updated != gist.content {
@@ -615,12 +633,25 @@ pub fn run_ui(
                                             let sender = tx.clone();
                                             let id = gist.id;
                                             let tags = gist.tags.clone();
-                                            thread::spawn(move || {
+                                            let config = state.config.clone();
+                                            let old_content = gist.content.clone();
+                                            
+                                            tokio::spawn(async move {
+                                                // Regenerate tags if content changed
+                                                let new_tags = if updated != old_content {
+                                                    match get_tags(&updated, &config).await {
+                                                        Ok(t) => t,
+                                                        Err(_) => tags,
+                                                    }
+                                                } else {
+                                                    tags
+                                                };
+
                                                 let (response_tx, response_rx) = mpsc::channel();
                                                 let _ = db_sender.send(DbOperation::Update(
                                                     id, 
                                                     updated, 
-                                                    tags, 
+                                                    new_tags, 
                                                     response_tx
                                                 ));
                                                 
@@ -681,7 +712,7 @@ pub fn run_ui(
                             KeyCode::Char('r') => {
                                 // Reload from database
                                 let conn_lock = conn_ui.lock().unwrap();
-                                let result = crate::list_gists(&conn_lock, usize::MAX, "created_at");
+                                let result = list_gists(&conn_lock, usize::MAX, "created_at");
                                 match result {
                                     Ok(gists) => {
                                         *gists_storage = gists.clone();

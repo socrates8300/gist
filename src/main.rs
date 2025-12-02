@@ -1,30 +1,19 @@
 #![allow(unused)]
 mod viewer;
+mod models;
+mod config;
+mod db;
+mod ai;
+mod utils;
 
 use clap::{Parser, Subcommand};
 use colored::*;
-use dirs;
-use rusqlite::{params, Connection, Result as SqlResult};
-use serde::{Deserialize, Serialize};
-use std::{
-    env,
-    error::Error,
-    fs,
-    io::{Read, Write},
-    path::PathBuf,
-    process::Command,
-    time::{Duration, Instant},
-};
-use tempfile::NamedTempFile;
-use tokio;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Gist {
-    pub id: i64,
-    pub content: String,
-    pub tags: String,
-    pub created_at: String,
-}
+use std::{error::Error, path::PathBuf, io::Write};
+use crate::models::{Gist, Theme};
+use crate::config::{load_config, save_config, Config};
+use crate::db::*;
+use crate::ai::get_tags;
+use crate::utils::{edit_content, prompt_confirm, validate_content};
 
 #[derive(Parser)]
 #[command(author, version, about = "A simple code snippet manager")]
@@ -138,421 +127,10 @@ enum Commands {
     Optimize,
 }
 
-#[derive(Deserialize, Serialize, Default, Clone)]
-pub struct Config {
-    editor: String,
-    default_tags: Vec<String>,
-    theme: Theme,
-    auto_generate_tags: bool,
-    tag_api_key: Option<String>,
-}
-
-#[derive(Deserialize, Serialize, Clone, Debug)]
-pub enum Theme {
-    Dark,
-    Light,
-    System,
-}
-
-impl Default for Theme {
-    fn default() -> Self {
-        Theme::Dark
-    }
-}
-
-impl std::fmt::Display for Theme {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-// Error handling and feedback
-fn handle_error<T, E: std::fmt::Display>(result: Result<T, E>, operation: &str) -> Option<T> {
-    match result {
-        Ok(value) => Some(value),
-        Err(e) => {
-            eprintln!("{} {}: {}", "Error".red().bold(), operation, e);
-            None
-        }
-    }
-}
-
 fn print_success(message: &str) {
     println!("{} {}", "Success:".green().bold(), message);
 }
 
-fn prompt_confirm(message: &str) -> bool {
-    print!("{} {} [y/N]: ", "Confirm:".yellow().bold(), message);
-    std::io::stdout().flush().ok();
-    
-    let mut input = String::new();
-    if std::io::stdin().read_line(&mut input).is_err() {
-        return false;
-    }
-    
-    input.trim().to_lowercase() == "y"
-}
-
-// Configuration management
-fn get_gist_dir() -> Result<PathBuf, Box<dyn Error>> {
-    let home = dirs::home_dir().ok_or("Could not determine home directory")?;
-    let dir = home.join(".config").join("gist");
-
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
-
-fn get_config_path() -> Result<PathBuf, Box<dyn Error>> {
-    Ok(get_gist_dir()?.join("config.toml"))
-}
-
-fn load_config() -> Config {
-    if let Ok(config_path) = get_config_path() {
-        if let Ok(content) = fs::read_to_string(&config_path) {
-            if let Ok(config) = serde_json::from_str::<Config>(&content) {
-                return config;
-            }
-        }
-    }
-    
-    // Create default config if loading fails
-    let default_config = Config {
-        editor: String::new(),
-        default_tags: vec!["snippet".to_string()],
-        theme: Theme::Dark,
-        auto_generate_tags: true,
-        tag_api_key: None,
-    };
-    
-    // Try to save default config
-    if let Ok(config_path) = get_config_path() {
-        if let Ok(json_str) = serde_json::to_string_pretty(&default_config) {
-            let _ = fs::write(config_path, json_str);
-        }
-    }
-    
-    default_config
-}
-
-fn save_config(config: &Config) -> Result<(), Box<dyn Error>> {
-    let config_path = get_config_path()?;
-    let json_str = serde_json::to_string_pretty(config)?;
-    fs::write(config_path, json_str)?;
-    Ok(())
-}
-
-fn get_editor() -> String {
-    let config = load_config();
-    if !config.editor.is_empty() {
-        return config.editor;
-    }
-    
-    env::var("EDITOR").unwrap_or_else(|_| {
-        if cfg!(windows) {
-            "notepad".into()
-        } else if Command::new("nvim").arg("--version").status().is_ok() {
-            "nvim".into()
-        } else if Command::new("vim").arg("--version").status().is_ok() {
-            "vim".into()
-        } else {
-            "nano".into()
-        }
-    })
-}
-
-// Database functions
-fn get_db_path() -> Result<PathBuf, Box<dyn Error>> {
-    Ok(get_gist_dir()?.join("gists.db"))
-}
-
-fn init_db() -> Result<Connection, Box<dyn Error>> {
-    let db = get_db_path()?;
-    let conn = Connection::open(db)?;
-    
-    // Create table if it doesn't exist
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS gists (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            content TEXT NOT NULL,
-            tags TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )",
-        [],
-    )?;
-    
-    // Create indices if they don't exist
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_gists_content ON gists(content)",
-        [],
-    )?;
-    conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_gists_tags ON gists(tags)",
-        [],
-    )?;
-    
-    Ok(conn)
-}
-
-fn optimize_database(conn: &Connection) -> SqlResult<()> {
-    // Run VACUUM to reclaim space and optimize the database
-    conn.execute("VACUUM", [])?;
-    
-    // Analyze for query optimization
-    conn.execute("ANALYZE", [])?;
-    
-    Ok(())
-}
-
-fn insert_gist(c: &Connection, content: &str, tags: &str) -> SqlResult<i64> {
-    c.execute(
-        "INSERT INTO gists (content, tags) VALUES (?1, ?2)",
-        params![content, tags],
-    )?;
-    Ok(c.last_insert_rowid())
-}
-
-fn update_gist(c: &Connection, id: i64, content: &str, tags: &str) -> SqlResult<()> {
-    let result = c.execute(
-        "UPDATE gists SET content=?1, tags=?2 WHERE id=?3",
-        params![content, tags, id],
-    )?;
-    
-    if result == 0 {
-        return Err(rusqlite::Error::QueryReturnedNoRows);
-    }
-    
-    Ok(())
-}
-
-fn delete_gist(c: &Connection, id: i64) -> SqlResult<bool> {
-    let result = c.execute("DELETE FROM gists WHERE id=?1", params![id])?;
-    Ok(result > 0)
-}
-
-fn get_gist(c: &Connection, id: i64) -> SqlResult<Option<Gist>> {
-    let result = c.query_row(
-        "SELECT id, content, tags, created_at FROM gists WHERE id = ?1",
-        params![id],
-        |r| {
-            Ok(Gist {
-                id: r.get(0)?,
-                content: r.get(1)?,
-                tags: r.get(2)?,
-                created_at: r.get(3)?,
-            })
-        },
-    );
-    
-    match result {
-        Ok(gist) => Ok(Some(gist)),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e),
-    }
-}
-
-fn search_gists(c: &Connection, query: &str, tags_only: bool) -> SqlResult<Vec<Gist>> {
-    let like = format!("%{}%", query);
-    let sql = if tags_only {
-        "SELECT id, content, tags, created_at FROM gists 
-         WHERE tags LIKE ?1 ORDER BY created_at DESC"
-    } else {
-        "SELECT id, content, tags, created_at FROM gists
-         WHERE content LIKE ?1 OR tags LIKE ?1 ORDER BY created_at DESC"
-    };
-    
-    let mut stmt = c.prepare(sql)?;
-    let res = stmt.query_map(params![like], |r| {
-        Ok(Gist {
-            id: r.get(0)?,
-            content: r.get(1)?,
-            tags: r.get(2)?,
-            created_at: r.get(3)?,
-        })
-    })?;
-    
-    let mut out = Vec::new();
-    for g in res {
-        out.push(g?);
-    }
-    Ok(out)
-}
-
-fn list_gists(c: &Connection, limit: usize, sort_by: &str) -> SqlResult<Vec<Gist>> {
-    // Validate sort_by to prevent SQL injection
-    let order_by = match sort_by.to_lowercase().as_str() {
-        "id" => "id",
-        "tags" => "tags",
-        "created" | "created_at" => "created_at",
-        _ => "created_at", // Default
-    };
-    
-    let sql = format!(
-        "SELECT id, content, tags, created_at FROM gists 
-         ORDER BY {} DESC LIMIT ?1", 
-        order_by
-    );
-    
-    let mut stmt = c.prepare(&sql)?;
-    let res = stmt.query_map(params![limit as i64], |r| {
-        Ok(Gist {
-            id: r.get(0)?,
-            content: r.get(1)?,
-            tags: r.get(2)?,
-            created_at: r.get(3)?,
-        })
-    })?;
-    
-    let mut out = Vec::new();
-    for g in res {
-        out.push(g?);
-    }
-    Ok(out)
-}
-
-// Content management and editing
-fn validate_content(content: &str) -> Result<(), String> {
-    if content.trim().is_empty() {
-        return Err("Content cannot be empty".into());
-    }
-    
-    if content.len() > 1_000_000 {  // 1MB limit
-        return Err("Content is too large (max 1MB)".into());
-    }
-    
-    Ok(())
-}
-
-fn sanitize_tags(tags: &str) -> String {
-    tags.split(',')
-        .map(|tag| tag.trim())
-        .filter(|tag| !tag.is_empty())
-        .take(10)  // Limit to 10 tags
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn edit_content(initial: Option<&str>) -> Result<String, Box<dyn Error>> {
-    let mut tmp = NamedTempFile::new()?;
-    if let Some(s) = initial {
-        tmp.write_all(s.as_bytes())?;
-    }
-    let p = tmp.path();
-
-    let editor = get_editor();
-    let status = Command::new(&editor).arg(p).status()?;
-    
-    if !status.success() {
-        return Err(format!("Editor '{}' exited with error", editor).into());
-    }
-    
-    let mut buf = String::new();
-    fs::File::open(p)?.read_to_string(&mut buf)?;
-    
-    if let Err(e) = validate_content(&buf) {
-        return Err(e.into());
-    }
-    
-    Ok(buf)
-}
-
-fn edit_tags(initial: Option<&str>) -> Result<String, Box<dyn Error>> {
-    let default = initial.unwrap_or("").to_string();
-    println!("Current tags: {}", default.cyan());
-    print!("Enter new tags (comma separated, leave empty to keep current): ");
-    std::io::stdout().flush()?;
-    
-    let mut input = String::new();
-    std::io::stdin().read_line(&mut input)?;
-    
-    let input = input.trim();
-    if input.is_empty() {
-        return Ok(default);
-    }
-    
-    Ok(sanitize_tags(input))
-}
-
-// Tag generation with API
-#[derive(Serialize)]
-struct ChatRequest {
-    model: String,
-    messages: Vec<ChatMessage>,
-    temperature: f32,
-}
-
-#[derive(Serialize)]
-struct ChatMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<ChatChoice>,
-}
-
-#[derive(Deserialize)]
-struct ChatChoice {
-    message: ChatMessageResponse,
-}
-
-#[derive(Deserialize)]
-struct ChatMessageResponse {
-    role: String,
-    content: String,
-}
-
-async fn get_tags(content: &str, config: &Config) -> Result<String, Box<dyn Error>> {
-    // Skip if auto-generate is disabled
-    if !config.auto_generate_tags {
-        return Ok(config.default_tags.join(", "));
-    }
-
-    // Try using API if key is available
-    if let Some(key) = &config.tag_api_key {
-        let reqbody = serde_json::json!({
-            "model": "openai/gpt-4o",
-            "messages": [{"role":"user","content":format!("Extract 3-5 relevant tags separated by commas:\n{}",content)}],
-            "temperature":0.1,
-        });
-        
-        let client = reqwest::Client::new();
-        let response = client
-            .post("https://openrouter.ai/api/v1/chat/completions")
-            .header("Authorization", format!("Bearer {}", key))
-            .json(&reqbody)
-            .send()
-            .await;
-            
-        // If successful, parse and return tags
-        if let Ok(r) = response {
-            if r.status().is_success() {
-                if let Ok(resp) = r.json::<ChatResponse>().await {
-                    if let Some(choice) = resp.choices.first() {
-                        let tags = choice.message.content.trim().to_string();
-                        return Ok(sanitize_tags(&tags));
-                    }
-                }
-            }
-        }
-    }
-    
-    // Fallback: Extract common programming words or use default tags
-    let common_langs = ["rust", "python", "javascript", "html", "css", "sql", "bash", "code", "snippet"];
-    let detected: Vec<&str> = common_langs
-        .iter()
-        .filter(|&lang| content.to_lowercase().contains(lang))
-        .copied()
-        .collect();
-    
-    if !detected.is_empty() {
-        Ok(detected.join(", "))
-    } else {
-        Ok(config.default_tags.join(", "))
-    }
-}
-
-// Display functions
 fn display_gist(g: &Gist) {
     println!(
         "{} {}\n{} {}\n{} {}\n\n{}",
@@ -604,51 +182,6 @@ fn format_timestamp(ts: &str) -> String {
     ts.to_string()
 }
 
-// Import/Export functions
-#[derive(Serialize, Deserialize)]
-struct GistExport {
-    version: u8,
-    gists: Vec<Gist>,
-}
-
-fn export_gists(c: &Connection, path: &PathBuf) -> Result<usize, Box<dyn Error>> {
-    let gists = list_gists(c, usize::MAX, "created_at")?;
-    let export = GistExport {
-        version: 1,
-        gists,
-    };
-    
-    let json = serde_json::to_string_pretty(&export)?;
-    fs::write(path, json)?;
-    Ok(export.gists.len())
-}
-
-fn import_gists(c: &Connection, path: &PathBuf) -> Result<usize, Box<dyn Error>> {
-    let content = fs::read_to_string(path)?;
-    let import: GistExport = serde_json::from_str(&content)?;
-    
-    if import.gists.is_empty() {
-        return Ok(0);
-    }
-    
-    let mut count = 0;
-    c.execute("BEGIN TRANSACTION", [])?;
-    
-    for gist in import.gists {
-        let result = c.execute(
-            "INSERT INTO gists (content, tags, created_at) VALUES (?1, ?2, ?3)",
-            params![gist.content, gist.tags, gist.created_at],
-        );
-        
-        if result.is_ok() {
-            count += 1;
-        }
-    }
-    
-    c.execute("COMMIT", [])?;
-    Ok(count)
-}
-
 // Main function
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -671,7 +204,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     eprintln!("{} File not found: {:?}", "Error:".red().bold(), file_path);
                     return Ok(());
                 }
-                fs::read_to_string(file_path)?
+                std::fs::read_to_string(file_path)?
             } else {
                 match edit_content(None) {
                     Ok(c) => c,
@@ -689,7 +222,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             
             // Get tags
             let tags_str = if let Some(t) = tags {
-                sanitize_tags(&t)
+                crate::ai::sanitize_tags(&t)
             } else {
                 match get_tags(&content, &config).await {
                     Ok(t) => t,
@@ -734,7 +267,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             
             // Get tags
             let tags_str = if let Some(t) = tags {
-                sanitize_tags(&t)
+                crate::ai::sanitize_tags(&t)
             } else if content == gist.content {
                 // If content didn't change, keep existing tags
                 gist.tags
@@ -951,4 +484,3 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     Ok(())
 }
-
