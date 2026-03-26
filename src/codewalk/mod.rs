@@ -4,6 +4,8 @@ pub mod export;
 #[cfg(feature = "meerkat")]
 pub mod meerkat_spike;
 #[cfg(feature = "meerkat")]
+pub mod agent;
+#[cfg(feature = "meerkat")]
 pub mod recon;
 pub mod prompt;
 pub mod repo;
@@ -23,7 +25,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use repo::RepoIndex;
 use std::{error::Error, io, path::PathBuf, time::Duration};
 use tokio::sync::mpsc;
-use types::StreamEvent;
+use types::{StreamEvent, WalkMode};
 
 /// Main entry point for a CodeWalk session
 pub async fn run_codewalk(
@@ -35,6 +37,7 @@ pub async fn run_codewalk(
     output_path: Option<PathBuf>,
     config: Config,
     no_meerkat: bool,
+    mode: WalkMode,
 ) -> Result<(), Box<dyn Error>> {
     let model = model.unwrap_or_else(|| config.ai_model.clone().unwrap_or_else(|| "z-ai/glm-5-turbo".to_string()));
 
@@ -56,6 +59,9 @@ pub async fn run_codewalk(
         repo_index.file_count,
         repo_index.languages.len()
     );
+
+    // Capture model string for session log (already resolved to String above)
+    let model_str = model.clone();
 
     // Run recon agent to build a RepoMap before entering the TUI
     #[cfg(feature = "meerkat")]
@@ -82,11 +88,25 @@ pub async fn run_codewalk(
     #[cfg(not(feature = "meerkat"))]
     let repo_map: Option<types::RepoMap> = None;
 
-    // Load system prompt
+    // Load system prompt — mode-specific when using the walk agent
+    #[cfg(feature = "meerkat")]
+    let system_prompt = if !no_meerkat && prompt_file.is_none() {
+        prompt::walk_agent_system_prompt(&mode)
+    } else {
+        load_system_prompt(prompt_file.as_deref())
+    };
+    #[cfg(not(feature = "meerkat"))]
     let system_prompt = load_system_prompt(prompt_file.as_deref());
 
     // Initialize app state
     let mut app = CodeWalkApp::new(scope.clone(), repo_path.clone(), output_path);
+
+    // Configure walk agent settings
+    #[cfg(feature = "meerkat")]
+    {
+        app.use_meerkat = !no_meerkat;
+        app.walk_mode = mode.clone();
+    }
 
     // Load existing notes if provided
     if let Some(notes_path) = &notes_file {
@@ -112,6 +132,26 @@ pub async fn run_codewalk(
     app.start_streaming();
     app.set_status("Requesting architectural overview...".to_string());
 
+    #[cfg(feature = "meerkat")]
+    if app.use_meerkat {
+        agent::spawn_walk_step(
+            api_config.clone(),
+            system_prompt.clone(),
+            app.conversation.clone(),
+            repo_path.clone(),
+            stream_tx.clone(),
+            0,
+            None,
+        );
+    } else {
+        spawn_stream_request(
+            api_config.clone(),
+            system_prompt.clone(),
+            app.conversation.clone(),
+            stream_tx.clone(),
+        );
+    }
+    #[cfg(not(feature = "meerkat"))]
     spawn_stream_request(
         api_config.clone(),
         system_prompt.clone(),
@@ -142,9 +182,39 @@ pub async fn run_codewalk(
 
     // Export session if output path is set
     if let Some(output_path) = &app.output_path {
-        let summary = export::export_session(&app, &model);
+        let summary = export::export_session(&app, &model_str);
         std::fs::write(output_path, &summary)?;
         eprintln!("Session exported to {}", output_path.display());
+    }
+
+    // Auto-save session log to ~/.config/gist/sessions/
+    if !app.steps.is_empty() {
+        let sessions_dir = dirs::config_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("gist")
+            .join("sessions");
+        let _ = std::fs::create_dir_all(&sessions_dir);
+        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let slug = repo_path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "repo".to_string());
+        let session_data = serde_json::json!({
+            "repo_path": repo_path.display().to_string(),
+            "model": model_str,
+            "step_count": app.steps.len(),
+            "steps": app.steps.iter().map(|s| serde_json::json!({
+                "file": s.response.file,
+                "line_start": s.response.line_start,
+                "line_end": s.response.line_end,
+                "explanation_preview": s.response.explanation.chars().take(200).collect::<String>(),
+            })).collect::<Vec<_>>(),
+            "timestamp": chrono::Local::now().to_rfc3339(),
+        });
+        let filename = format!("{ts}-{slug}-walk.json");
+        if let Ok(json) = serde_json::to_string_pretty(&session_data) {
+            let _ = std::fs::write(sessions_dir.join(filename), json);
+        }
     }
 
     result
@@ -261,6 +331,23 @@ fn request_next_step(
     app.start_streaming();
     app.set_status("Requesting next step...".to_string());
 
+    #[cfg(feature = "meerkat")]
+    if app.use_meerkat {
+        let next_hint = app.current_step_data()
+            .and_then(|s| s.response.next_file.clone());
+        let step_number = app.steps.len();
+        agent::spawn_walk_step(
+            api_config.clone(),
+            system_prompt.to_string(),
+            app.conversation.clone(),
+            app.repo_path.clone(),
+            stream_tx.clone(),
+            step_number,
+            next_hint,
+        );
+        return;
+    }
+
     spawn_stream_request(
         api_config.clone(),
         system_prompt.to_string(),
@@ -298,6 +385,12 @@ fn handle_key_input(
     system_prompt: &str,
     repo_index: &mut RepoIndex,
 ) {
+    // Ctrl-C exits gracefully from any mode
+    if code == KeyCode::Char('c') && modifiers.contains(KeyModifiers::CONTROL) {
+        app.should_quit = true;
+        return;
+    }
+
     match app.mode.clone() {
         CWInputMode::Normal => {
             handle_normal_mode(app, code, modifiers, stream_tx, api_config, system_prompt, repo_index);

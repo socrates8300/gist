@@ -135,12 +135,12 @@ gist codewalk <path> [--mode audit|onboarding|review|security]
 | `security` | Input validation, secrets, auth, OWASP patterns |
 
 **Definition of Done:**
-- [ ] Walk agent reads ≥3 files per step on repos with >5 modules (not just 1–2)
-- [ ] `--mode review` produces a walkthrough focused on `git diff` context
-- [ ] `--mode audit` surfaces dependency count, error-unhandled paths
-- [ ] User can interrupt mid-walk (Ctrl-C) without hang — agent respects cancellation
-- [ ] Session log written to `~/.config/gist/sessions/<timestamp>.json`
-- [ ] Legacy `--no-meerkat` path still works
+- [x] Walk agent reads ≥3 files per step on repos with >5 modules (not just 1–2)
+- [x] `--mode review` produces a walkthrough focused on `git diff` context
+- [x] `--mode audit` surfaces dependency count, error-unhandled paths
+- [x] User can interrupt mid-walk (Ctrl-C) without hang — agent respects cancellation
+- [x] Session log written to `~/.config/gist/sessions/<timestamp>.json`
+- [x] Legacy `--no-meerkat` path still works
 
 ---
 
@@ -223,6 +223,7 @@ These apply to every phase:
 | 2026-03-25 | Implement custom `OpenRouterChatClient` wrapping Chat Completions API | Meerkat's built-in `OpenAiClient` uses `/v1/responses`, not `/v1/chat/completions`; OpenRouter only supports Chat Completions; custom `LlmClient` impl bridges the gap |
 | 2026-03-25 | Phase 0 complete — GLM-5-Turbo tool calls work on OpenRouter | Live spike confirmed: model emitted well-formed tool-call JSON, `read_file` round-trip succeeded, +1MB binary delta (32→33MB). Proceed to Phase 1. |
 | 2026-03-26 | Phase 1 complete — Recon Agent implemented | `src/codewalk/recon.rs` added: 4-tool dispatcher (shell/read_file/glob/finish_recon), shell allow-list, RepoMap capture via Arc<Mutex>. Types in `types.rs`. `--no-meerkat` flag wires legacy bypass. All 10 tests pass. |
+| 2026-03-26 | Phase 2 complete — Walk Agent implemented | `src/codewalk/agent.rs`: WalkDispatcher with read_file/grep/task_note/next_step tools. `next_step` delivers steps via StreamEvent channel — TUI unchanged. `WalkMode` enum + 4 mode system prompts. `--mode` CLI flag. Ctrl-C graceful shutdown. Session auto-save to ~/.config/gist/sessions/. All 10 tests pass. |
 
 ---
 

@@ -1,3 +1,4 @@
+use crate::codewalk::types::WalkMode;
 use std::fs;
 use std::path::Path;
 
@@ -49,6 +50,72 @@ pub fn load_system_prompt(prompt_path: Option<&Path>) -> String {
         }
     }
     default_system_prompt()
+}
+
+/// System prompt for the Meerkat walk agent. Includes mode-specific focus and
+/// explicit instructions for using tools and calling `next_step`.
+pub fn walk_agent_system_prompt(mode: &WalkMode) -> String {
+    let mode_focus = match mode {
+        WalkMode::Onboarding => {
+            "**Mode: Onboarding**\n\
+             Focus on architecture, entry points, module relationships, and data flow.\n\
+             Answer the question: \"How does this work?\" \
+             Guide a new developer through the codebase structure and key abstractions."
+        }
+        WalkMode::Review => {
+            "**Mode: Review**\n\
+             Focus on recent changes, commit history context, and what has changed and why.\n\
+             Answer the question: \"What changed?\" \
+             Use git log output from the RepoMap to connect files to their recent changes. \
+             Explain the significance of the most active areas."
+        }
+        WalkMode::Audit => {
+            "**Mode: Audit**\n\
+             Focus on technical debt, error handling, and code quality.\n\
+             Actively search for: unwrap() / expect() calls, TODO/FIXME comments, \
+             missing error propagation, large functions, and complex dependencies.\n\
+             Answer the question: \"What could fail or needs attention?\""
+        }
+        WalkMode::Security => {
+            "**Mode: Security**\n\
+             Focus on security-relevant code paths.\n\
+             Actively search for: input validation, authentication/authorization logic, \
+             secrets in code, SQL query construction, deserialization of untrusted data, \
+             and OWASP top-10 patterns.\n\
+             Answer the question: \"What are the security risks?\""
+        }
+    };
+
+    format!(
+        r#"You are a senior software engineer performing a guided code walkthrough.
+
+{mode_focus}
+
+## Process
+
+1. Call `read_file` to read source files (read at least 2-3 files per step)
+2. Call `grep` to find symbols, patterns, or references across the codebase
+3. Call `task_note` to log your reasoning (optional)
+4. Call `next_step` exactly once when ready to present your findings
+
+## next_step — Required Format
+
+Call `next_step` with these arguments:
+- `file`: primary file being explained (relative path, e.g. `src/main.rs`). Use `"OVERVIEW"` for architectural overviews.
+- `line_start`: first relevant line number (integer, 0 for overview)
+- `line_end`: last relevant line number (integer, 0 for overview)
+- `explanation`: your full narrative explanation in markdown (3-8 paragraphs, conversational tone)
+- `deep_dives`: array of `{{id, label}}` objects for topics worth exploring deeper (0-3 items)
+- `next_file`: the next file you plan to cover (null if this is the last step)
+
+## Rules
+
+- Read files before explaining them — never guess at content
+- Cover ONE logical section per step (one function, one module, one concept)
+- Use "we", "notice how", "the reason for this is" — pair-programming voice
+- For the first step, produce an architectural OVERVIEW
+- Call `next_step` exactly once per response; put all content in that call"#
+    )
 }
 
 /// Build the initial user message with scope and repo context.

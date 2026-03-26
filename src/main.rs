@@ -173,6 +173,10 @@ enum Commands {
         #[cfg(feature = "meerkat")]
         #[arg(long)]
         no_meerkat: bool,
+
+        /// Walk mode: onboarding, review, audit, security
+        #[arg(long, default_value = "onboarding")]
+        mode: String,
     },
 }
 
@@ -575,7 +579,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         },
 
-        Commands::Codewalk { scope, model, prompt, notes, output, path, #[cfg(feature = "meerkat")] meerkat_spike, #[cfg(feature = "meerkat")] no_meerkat } => {
+        Commands::Codewalk { scope, model, prompt, notes, output, path, #[cfg(feature = "meerkat")] meerkat_spike, #[cfg(feature = "meerkat")] no_meerkat, mode } => {
             if !path.exists() || !path.is_dir() {
                 eprintln!("{} Repository path does not exist or is not a directory: {:?}", "Error:".red().bold(), path);
                 return Ok(());
@@ -599,6 +603,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
             #[cfg(not(feature = "meerkat"))]
             let no_meerkat_val = false;
 
+            let walk_mode = mode.parse::<codewalk::types::WalkMode>().unwrap_or_default();
+
             if let Err(e) = codewalk::run_codewalk(
                 scope,
                 path,
@@ -608,6 +614,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 output,
                 config,
                 no_meerkat_val,
+                walk_mode,
             ).await {
                 eprintln!("{} {}", "CodeWalk error:".red().bold(), e);
             }

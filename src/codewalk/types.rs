@@ -67,6 +67,45 @@ pub struct ApiConfig {
     pub model: String,
 }
 
+// ── Walk mode ────────────────────────────────────────────────────────────────
+
+/// Controls the walk agent's focus and system prompt variant
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub enum WalkMode {
+    #[default]
+    Onboarding,
+    Review,
+    Audit,
+    Security,
+}
+
+impl std::fmt::Display for WalkMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WalkMode::Onboarding => write!(f, "onboarding"),
+            WalkMode::Review => write!(f, "review"),
+            WalkMode::Audit => write!(f, "audit"),
+            WalkMode::Security => write!(f, "security"),
+        }
+    }
+}
+
+impl std::str::FromStr for WalkMode {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "onboarding" => Ok(WalkMode::Onboarding),
+            "review" => Ok(WalkMode::Review),
+            "audit" => Ok(WalkMode::Audit),
+            "security" => Ok(WalkMode::Security),
+            other => Err(format!(
+                "Unknown mode '{}'. Use: onboarding, review, audit, security",
+                other
+            )),
+        }
+    }
+}
+
 // ── Recon types ───────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]

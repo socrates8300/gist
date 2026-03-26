@@ -65,6 +65,10 @@ pub struct CodeWalkApp {
 
     // Output path for session export
     pub output_path: Option<PathBuf>,
+
+    // Walk agent config (Phase 2+)
+    pub use_meerkat: bool,
+    pub walk_mode: WalkMode,
 }
 
 impl CodeWalkApp {
@@ -93,6 +97,8 @@ impl CodeWalkApp {
             pending_g: false,
             should_quit: false,
             output_path,
+            use_meerkat: false,
+            walk_mode: WalkMode::default(),
         }
     }
 
