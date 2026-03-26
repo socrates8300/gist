@@ -70,13 +70,15 @@ pub struct ApiConfig {
 // ── Walk mode ────────────────────────────────────────────────────────────────
 
 /// Controls the walk agent's focus and system prompt variant
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, PartialEq)]
 pub enum WalkMode {
     #[default]
     Onboarding,
     Review,
     Audit,
     Security,
+    /// Phase 4: parallel per-module audit with sub-agents
+    DeepAudit,
 }
 
 impl std::fmt::Display for WalkMode {
@@ -86,6 +88,7 @@ impl std::fmt::Display for WalkMode {
             WalkMode::Review => write!(f, "review"),
             WalkMode::Audit => write!(f, "audit"),
             WalkMode::Security => write!(f, "security"),
+            WalkMode::DeepAudit => write!(f, "deep-audit"),
         }
     }
 }
@@ -98,8 +101,9 @@ impl std::str::FromStr for WalkMode {
             "review" => Ok(WalkMode::Review),
             "audit" => Ok(WalkMode::Audit),
             "security" => Ok(WalkMode::Security),
+            "deep-audit" | "deepaudit" => Ok(WalkMode::DeepAudit),
             other => Err(format!(
-                "Unknown mode '{}'. Use: onboarding, review, audit, security",
+                "Unknown mode '{}'. Use: onboarding, review, audit, security, deep-audit",
                 other
             )),
         }
@@ -145,6 +149,47 @@ pub enum Complexity {
 pub struct RepoStats {
     pub file_count: usize,
     pub approx_loc: usize,
+}
+
+// ── Phase 4: deep-audit types ────────────────────────────────────────────────
+
+/// A file:line reference produced by a sub-agent finding
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileRef {
+    pub path: String,
+    pub line: usize,
+    pub note: String,
+}
+
+/// Audit findings for a single module produced by a sub-agent
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModuleFindings {
+    pub module_path: String,
+    pub purpose: String,
+    pub findings: Vec<String>,
+    pub risks: Vec<String>,
+    pub file_refs: Vec<FileRef>,
+    pub tool_calls_used: usize,
+}
+
+/// Budget limits for a deep-audit session
+#[derive(Debug, Clone)]
+pub struct BudgetConfig {
+    pub max_tokens: usize,
+    pub max_tool_calls: usize,
+    pub max_wall_seconds: u64,
+    pub max_subagents: usize,
+}
+
+impl Default for BudgetConfig {
+    fn default() -> Self {
+        Self {
+            max_tokens: 100_000,
+            max_tool_calls: 200,
+            max_wall_seconds: 300,
+            max_subagents: 4,
+        }
+    }
 }
 
 // ── Session persistence ───────────────────────────────────────────────────────

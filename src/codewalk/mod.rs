@@ -7,6 +7,8 @@ pub mod meerkat_spike;
 pub mod agent;
 #[cfg(feature = "meerkat")]
 pub mod recon;
+#[cfg(feature = "meerkat")]
+pub mod deep_audit;
 pub mod prompt;
 pub mod repo;
 pub mod session;
@@ -100,6 +102,61 @@ pub async fn run_codewalk(
     #[cfg(not(feature = "meerkat"))]
     let system_prompt = load_system_prompt(prompt_file.as_deref());
 
+    // Phase 4: deep-audit — run all sub-agents before entering TUI
+    #[cfg(feature = "meerkat")]
+    let (deep_audit_findings, deep_audit_budget): (
+        Vec<types::ModuleFindings>,
+        Option<std::sync::Arc<deep_audit::BudgetState>>,
+    ) = if mode == types::WalkMode::DeepAudit && !no_meerkat {
+        let cw_cfg = config.codewalk.as_ref();
+        let budget_config = types::BudgetConfig {
+            max_tokens: cw_cfg.map(|c| c.max_tokens).unwrap_or(100_000),
+            max_tool_calls: cw_cfg.map(|c| c.max_tool_calls).unwrap_or(200),
+            max_wall_seconds: cw_cfg.map(|c| c.max_wall_seconds).unwrap_or(300),
+            max_subagents: cw_cfg.map(|c| c.max_subagents).unwrap_or(4),
+        };
+        let modules = repo_map
+            .as_ref()
+            .map(|m| m.key_modules.clone())
+            .unwrap_or_default();
+        if modules.is_empty() {
+            eprintln!(
+                "Warning: no modules in repo map. Recon may have failed; try without --no-meerkat."
+            );
+            (vec![], None)
+        } else {
+            eprintln!(
+                "Running deep audit: {} modules, max {} concurrent, {} tool call budget...",
+                modules.len(),
+                budget_config.max_subagents,
+                budget_config.max_tool_calls,
+            );
+            let budget = deep_audit::BudgetState::new(budget_config);
+            let findings = deep_audit::run_deep_audit(
+                &api_config,
+                modules,
+                &repo_path,
+                std::sync::Arc::clone(&budget),
+            )
+            .await;
+            let tool_calls = budget
+                .total_tool_calls
+                .load(std::sync::atomic::Ordering::SeqCst);
+            let exceeded = budget
+                .budget_exceeded
+                .load(std::sync::atomic::Ordering::SeqCst);
+            eprintln!(
+                "Deep audit complete: {} modules, {} tool calls{}",
+                findings.len(),
+                tool_calls,
+                if exceeded { " (budget limit reached)" } else { "" }
+            );
+            (findings, Some(budget))
+        }
+    } else {
+        (vec![], None)
+    };
+
     // Phase 3: compaction threshold from config
     let compaction_threshold = config
         .codewalk
@@ -152,6 +209,34 @@ pub async fn run_codewalk(
         }
     }
 
+    // Phase 4: pre-load deep-audit findings as WalkSteps before TUI starts
+    #[cfg(feature = "meerkat")]
+    if !deep_audit_findings.is_empty() {
+        for (i, finding) in deep_audit_findings.iter().enumerate() {
+            let explanation = deep_audit::format_findings_as_explanation(finding);
+            let response = types::ClaudeStepResponse {
+                file: finding.module_path.clone(),
+                line_start: 0,
+                line_end: 0,
+                explanation,
+                deep_dives: vec![],
+                next_file: None,
+            };
+            let file_content = repo_index.read_file(&finding.module_path).unwrap_or_default();
+            app.steps.push(types::WalkStep {
+                index: i,
+                response,
+                file_content,
+                is_deep_dive: false,
+                parent_step: None,
+            });
+        }
+        if !app.steps.is_empty() {
+            app.current_step = 0;
+            app.mode = app::CWInputMode::Normal;
+        }
+    }
+
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -162,9 +247,35 @@ pub async fn run_codewalk(
     // Create streaming channel
     let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<StreamEvent>();
 
-    // If resuming, skip the initial request and go straight to the event loop
-    if resume_id.is_some() && !app.steps.is_empty() {
-        app.set_status(format!("Resumed at step {}", app.current_step + 1));
+    // Skip initial streaming if steps already loaded (resume or deep-audit)
+    let is_deep_audit_preloaded = {
+        #[cfg(feature = "meerkat")]
+        { mode == types::WalkMode::DeepAudit && !app.steps.is_empty() }
+        #[cfg(not(feature = "meerkat"))]
+        { false }
+    };
+    if (resume_id.is_some() || is_deep_audit_preloaded) && !app.steps.is_empty() {
+        let status = if is_deep_audit_preloaded {
+            let exceeded = {
+                #[cfg(feature = "meerkat")]
+                {
+                    deep_audit_budget
+                        .as_ref()
+                        .map(|b| b.budget_exceeded.load(std::sync::atomic::Ordering::SeqCst))
+                        .unwrap_or(false)
+                }
+                #[cfg(not(feature = "meerkat"))]
+                { false }
+            };
+            format!(
+                "Deep audit: {} modules ready{}. Use n/p to navigate.",
+                app.steps.len(),
+                if exceeded { " (budget limit reached)" } else { "" }
+            )
+        } else {
+            format!("Resumed at step {}", app.current_step + 1)
+        };
+        app.set_status(status);
     } else {
         // Phase 3: inject memory from prior sessions on this repo
         let prior = session::find_prior_sessions(&repo_path);
@@ -239,6 +350,30 @@ pub async fn run_codewalk(
 
     // Export session if output path is set
     if let Some(output_path) = &app.output_path {
+        #[cfg(feature = "meerkat")]
+        let summary = if !deep_audit_findings.is_empty() {
+            let (tool_calls, elapsed, exceeded) = deep_audit_budget
+                .as_ref()
+                .map(|b| {
+                    (
+                        b.total_tool_calls.load(std::sync::atomic::Ordering::SeqCst),
+                        b.elapsed_secs(),
+                        b.budget_exceeded.load(std::sync::atomic::Ordering::SeqCst),
+                    )
+                })
+                .unwrap_or((0, 0, false));
+            export::export_audit_report(
+                &app,
+                &model_str,
+                &deep_audit_findings,
+                tool_calls,
+                elapsed,
+                exceeded,
+            )
+        } else {
+            export::export_session(&app, &model_str)
+        };
+        #[cfg(not(feature = "meerkat"))]
         let summary = export::export_session(&app, &model_str);
         std::fs::write(output_path, &summary)?;
         eprintln!("Session exported to {}", output_path.display());

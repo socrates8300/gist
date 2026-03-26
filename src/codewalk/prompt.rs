@@ -84,6 +84,12 @@ pub fn walk_agent_system_prompt(mode: &WalkMode) -> String {
              and OWASP top-10 patterns.\n\
              Answer the question: \"What are the security risks?\""
         }
+        WalkMode::DeepAudit => {
+            "**Mode: Deep Audit**\n\
+             This session displays pre-computed parallel module audits. \
+             Review findings, risks, and file references already captured. \
+             Provide additional analysis or answer follow-up questions about the audit results."
+        }
     };
 
     format!(
