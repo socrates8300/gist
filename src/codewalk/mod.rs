@@ -31,7 +31,7 @@ pub async fn run_codewalk(
     output_path: Option<PathBuf>,
     config: Config,
 ) -> Result<(), Box<dyn Error>> {
-    let model = model.unwrap_or_else(|| "claude-sonnet-4-20250514".to_string());
+    let model = model.unwrap_or_else(|| config.ai_model.clone().unwrap_or_else(|| "z-ai/glm-5-turbo".to_string()));
 
     // Resolve API config
     let api_config = resolve_api_config(
