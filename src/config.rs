@@ -65,8 +65,8 @@ impl Default for Config {
             theme: Theme::Dark,
             auto_generate_tags: true,
             tag_api_key: None,
-            ai_model: Some("z-ai/glm-5-turbo".to_string()),
-            ai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            ai_model: Some("glm-5-turbo".to_string()),
+            ai_base_url: Some("https://api.z.ai/api/coding/paas/v4".to_string()),
             anthropic_api_key: None,
             codewalk: None,
         }

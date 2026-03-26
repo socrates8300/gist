@@ -625,10 +625,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             #[cfg(feature = "meerkat")]
             if meerkat_spike {
                 let api_key = config.tag_api_key.as_deref().unwrap_or("");
-                let base_url = config.ai_base_url.as_deref().unwrap_or("https://openrouter.ai/api/v1");
+                let base_url = config.ai_base_url.as_deref().unwrap_or("https://api.z.ai/api/coding/paas/v4");
                 let model_name = model.as_deref()
                     .or(config.ai_model.as_deref())
-                    .unwrap_or("z-ai/glm-5-turbo");
+                    .unwrap_or("glm-5-turbo");
                 if let Err(e) = codewalk::meerkat_spike::run_spike(api_key, base_url, model_name, &path).await {
                     eprintln!("{} {}", "Spike error:".red().bold(), e);
                 }

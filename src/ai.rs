@@ -49,8 +49,8 @@ pub async fn get_tags(content: &str, config: &Config) -> Result<String, Box<dyn 
 
     // Try using API if key is available
     if let Some(key) = &config.tag_api_key {
-        let model = config.ai_model.as_deref().unwrap_or("openai/gpt-4o");
-        let base_url = config.ai_base_url.as_deref().unwrap_or("https://openrouter.ai/api/v1");
+        let model = config.ai_model.as_deref().unwrap_or("glm-5-turbo");
+        let base_url = config.ai_base_url.as_deref().unwrap_or("https://api.z.ai/api/coding/paas/v4");
         let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
         let reqbody = serde_json::json!({

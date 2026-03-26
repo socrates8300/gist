@@ -279,8 +279,8 @@ default_tags = ["snippet"]
 theme = "Dark"                       # Dark | Light | System
 auto_generate_tags = true
 tag_api_key = "sk-or-..."           # OpenRouter key
-ai_model = "z-ai/glm-5-turbo"
-ai_base_url = "https://openrouter.ai/api/v1"
+ai_model = "glm-5-turbo"
+ai_base_url = "https://api.z.ai/api/coding/paas/v4"
 anthropic_api_key = ""              # Optional: direct Anthropic key for CodeWalk
 
 [codewalk]
@@ -297,21 +297,20 @@ max_subagents = 4                   # Deep-audit concurrency
 
 ## AI Setup
 
-CodeWalk and auto-tagging both use OpenRouter by default.
+CodeWalk and auto-tagging use [z.ai](https://z.ai) by default (GLM Coding Plan).
 
-1. Sign up at [openrouter.ai](https://openrouter.ai) and generate an API key
+1. Sign up at [z.ai](https://z.ai) and generate an API key from the [API Keys page](https://z.ai/manage-apikey/apikey-list)
 2. Set it via config:
    ```bash
-   gist config --api-key "sk-or-your-key-here"
+   gist config --api-key "your-z.ai-key"
    ```
-   Or as an environment variable:
+3. The defaults are already set correctly — no other configuration needed:
    ```bash
-   export OPENROUTER_API_KEY=sk-or-your-key-here
+   gist config --ai-model "glm-5-turbo"
+   gist config --ai-base-url "https://api.z.ai/api/coding/paas/v4"
    ```
-3. Optionally choose a model:
-   ```bash
-   gist config --ai-model "anthropic/claude-3.5-sonnet"
-   ```
+
+Any OpenAI-compatible provider also works — just update `--ai-base-url` and `--ai-model` accordingly.
 
 If no key is set, tagging falls back to default tags. CodeWalk requires an API key.
 

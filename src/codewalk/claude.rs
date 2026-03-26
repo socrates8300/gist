@@ -254,7 +254,7 @@ pub fn resolve_api_config(
     if let Some(key) = openrouter_key {
         if !key.is_empty() {
             let base_url = openrouter_base_url
-                .unwrap_or("https://openrouter.ai/api/v1")
+                .unwrap_or("https://api.z.ai/api/coding/paas/v4")
                 .to_string();
             return Ok(ApiConfig {
                 provider: ApiProvider::OpenRouter {
