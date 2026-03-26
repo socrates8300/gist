@@ -163,6 +163,11 @@ enum Commands {
 
         /// Repository path
         path: PathBuf,
+
+        /// Run Meerkat integration spike (requires --features meerkat)
+        #[cfg(feature = "meerkat")]
+        #[arg(long)]
+        meerkat_spike: bool,
     },
 }
 
@@ -565,9 +570,22 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         },
 
-        Commands::Codewalk { scope, model, prompt, notes, output, path } => {
+        Commands::Codewalk { scope, model, prompt, notes, output, path, #[cfg(feature = "meerkat")] meerkat_spike } => {
             if !path.exists() || !path.is_dir() {
                 eprintln!("{} Repository path does not exist or is not a directory: {:?}", "Error:".red().bold(), path);
+                return Ok(());
+            }
+
+            #[cfg(feature = "meerkat")]
+            if meerkat_spike {
+                let api_key = config.tag_api_key.as_deref().unwrap_or("");
+                let base_url = config.ai_base_url.as_deref().unwrap_or("https://openrouter.ai/api/v1");
+                let model_name = model.as_deref()
+                    .or(config.ai_model.as_deref())
+                    .unwrap_or("z-ai/glm-5-turbo");
+                if let Err(e) = codewalk::meerkat_spike::run_spike(api_key, base_url, model_name, &path).await {
+                    eprintln!("{} {}", "Spike error:".red().bold(), e);
+                }
                 return Ok(());
             }
 

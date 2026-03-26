@@ -1,6 +1,8 @@
 pub mod app;
 pub mod claude;
 pub mod export;
+#[cfg(feature = "meerkat")]
+pub mod meerkat_spike;
 pub mod prompt;
 pub mod repo;
 pub mod types;

@@ -5,7 +5,14 @@ edition = "2021"
 authors = ["jamesr@ideasx.com"]
 description = "A simple CLI to store, search, update, and retrieve gists with AI-powered tagging."
 
+[features]
+meerkat = ["dep:meerkat", "dep:meerkat-core", "dep:meerkat-store", "dep:async-trait"]
+
 [dependencies]
+meerkat = { version = "0.4", features = ["jsonl-store"], optional = true }
+meerkat-core = { version = "0.4", optional = true }
+meerkat-store = { version = "0.4", features = ["jsonl"], optional = true }
+async-trait = { version = "0.1", optional = true }
 clap = { version = "4.1", features = ["derive"] }
 rusqlite = "0.29.0"
 tokio = { version = "1", features = ["full"] }
