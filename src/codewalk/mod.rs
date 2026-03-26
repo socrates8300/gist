@@ -19,7 +19,7 @@ use crate::config::Config;
 use app::{CWInputMode, CWPanel, CodeWalkApp};
 use claude::{resolve_api_config, spawn_stream_request};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, MouseEvent, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -440,18 +440,24 @@ async fn run_event_loop(
         // 2. Render
         terminal.draw(|f| ui::render_codewalk(f, app))?;
 
-        // 3. Handle keyboard input
+        // 3. Handle input events
         if crossterm::event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                handle_key_input(
-                    app,
-                    key.code,
-                    key.modifiers,
-                    stream_tx,
-                    api_config,
-                    system_prompt,
-                    repo_index,
-                );
+            match event::read()? {
+                Event::Key(key) => {
+                    handle_key_input(
+                        app,
+                        key.code,
+                        key.modifiers,
+                        stream_tx,
+                        api_config,
+                        system_prompt,
+                        repo_index,
+                    );
+                }
+                Event::Mouse(MouseEvent { kind, .. }) => {
+                    handle_mouse_input(app, kind);
+                }
+                _ => {}
             }
         }
 
@@ -564,6 +570,21 @@ fn request_deep_dive(
         app.conversation.clone(),
         stream_tx.clone(),
     );
+}
+
+fn handle_mouse_input(app: &mut CodeWalkApp, kind: MouseEventKind) {
+    use app::CWPanel;
+    match kind {
+        MouseEventKind::ScrollDown => match app.focused_panel {
+            CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_add(3); }
+            CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_add(3); }
+        },
+        MouseEventKind::ScrollUp => match app.focused_panel {
+            CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_sub(3); }
+            CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_sub(3); }
+        },
+        _ => {}
+    }
 }
 
 fn handle_key_input(
