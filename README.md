@@ -1,140 +1,324 @@
-# 🌟 **Gist CLI**
+# Gist CLI
 
-A modern, AI-powered command-line **and interactive terminal app** for managing text snippets ("gists"):
-
-- save  
-- search  
-- edit  
-- **auto-tag with OpenRouter AI**
-
-all in a fast, minimal local database.
+A fast, local-first code snippet manager with an interactive terminal UI, AI-powered tagging, and an AI-driven repository walkthrough tool (CodeWalk).
 
 ---
 
-## 🚀 Features
+## Features
 
-- **Store & organize** any text snippet in SQLite
-- **Edit** with your preferred editor (Neovim, Vim, or any editor of choice)
-- **Rich terminal UI:**  
-  - browse  
-  - Vim & arrow key navigation  
-  - inline content view  
-  - live **fuzzy search** filter
-- **AI-powered tagging** using [OpenRouter](https://openrouter.ai)
-- **Search by text or tags**
-- View by ID or list with previews
-- Fully local first, fast, no cloud lock-in
-- Works standalone or as your snippet vault with optional AI
-- **Import/Export** functionality for backup and migration
-- **Configuration** system for customizing behavior
+- **Store & organize** any text snippet in a local SQLite database
+- **Syntax-highlighted** content view (Rust, Python, JS, SQL, Bash, and more)
+- **Interactive TUI** — two-panel layout, Vim-style navigation, live fuzzy search
+- **AI tagging** — auto-generates tags via OpenRouter (or any OpenAI-compatible API)
+- **Import/Export** for backup and migration
+- **CodeWalk** — AI-powered repository walkthrough with five focus modes, session persistence, and a parallel deep-audit engine
 
 ---
 
-## 🛠️ Installation
+## Installation
+
+### Requirements
+
+- Rust stable (1.70+)
+- SQLite3
+- Optional: OpenRouter API key for AI features
+
+### Build
 
 ```bash
-git clone https://github.com/yourusername/gist-cli.git
-cd gist-cli
+git clone https://github.com/socrates8300/gist.git
+cd gist
 
+# Standard build
 cargo build --release
+
+# With Meerkat agent support (required for CodeWalk recon + deep-audit)
+cargo build --release --features meerkat
+
 cargo install --path .
 ```
 
-Then you can run the CLI commands or launch the TUI:
-
-```bash
-gist ui
-```
-
 ---
 
-## ⚡ Usage
+## Snippet Management
+
+### Add
 
 ```bash
-# Add a new snippet (opens in your configured editor)
+# Open editor to write a new snippet
 gist add
 
-# Add a snippet with specified tags
-gist add --tags "rust,code,example"
+# With explicit tags
+gist add --tags "rust,async,example"
 
-# Add a snippet from a file
+# From an existing file
 gist add --file /path/to/code.rs
+```
 
-# Update existing by ID
-gist update 1
+If `--tags` is omitted, tags are generated automatically by the AI model.
 
-# Update tags for a snippet
-gist update 1 --tags "new,tags"
+### View and search
 
-# Search snippets by query text/tags
-gist search "rust async traits"
-
-# Search only in tags
-gist search "rust" --tags-only
-
-# View full snippet content
+```bash
+# View a snippet by ID (syntax-highlighted)
 gist view 1
 
-# Delete a snippet
-gist delete 1
+# Search across content and tags
+gist search "async trait"
 
-# List all snippets with preview lines
+# Search tags only
+gist search "rust" --tags-only
+
+# List all snippets (default: 20, sorted by creation time)
 gist list
 
-# List with custom sorting and limit
-gist list --sort-by tags --limit 10
+# Custom limit and sort order (options: created, id, tags)
+gist list --limit 50 --sort-by tags
+```
 
-# Launch interactive TUI (keyboard help built-in)
-gist ui
+### Edit and delete
 
-# Export all snippets to a file
+```bash
+# Edit content and regenerate tags
+gist update 1
+
+# Update tags only
+gist update 1 --tags "new,tags"
+
+# Delete with confirmation prompt
+gist delete 1
+
+# Delete without prompt
+gist delete 1 --force
+```
+
+### Import / Export
+
+```bash
+# Export all snippets to JSON
 gist export --output snippets.json
 
-# Import snippets from file
+# Import from JSON
 gist import --input snippets.json
+```
 
-# Configure application settings
-gist config --editor "code -w" --theme dark --auto-tags true
+### Database maintenance
 
-# Optimize database
+```bash
 gist optimize
 ```
 
 ---
 
-## 🤖 AI Tagging Setup
-
-**Optional but recommended** for generating meaningful tags:
-
-1. Sign up at [OpenRouter.ai](https://openrouter.ai)  
-2. Generate your API key  
-3. Set environment variable:
+## Interactive TUI
 
 ```bash
-export OPENROUTER_API_KEY=your_api_key_here
+gist ui
 ```
 
-Or configure through the CLI:
+Two-panel layout: snippet list on the left, full content on the right.
 
-```bash
-gist config --api-key "your_api_key_here"
-```
+### Keyboard shortcuts
 
-- If unset/unreachable, snippets will use intelligent fallback tagging
-- Tagging runs asynchronously and won't block your note flow
-- Tag generation can be disabled with `gist config --auto-tags false`
+| Key | Action |
+|-----|--------|
+| `↑` / `↓`, `j` / `k` | Move selection |
+| `PgUp` / `PgDn` | Page up/down |
+| `Home` / `End` | Jump to first/last |
+| `Tab` | Switch between panels |
+| `a` | Add new snippet |
+| `e` | Edit selected snippet |
+| `d` | Delete selected snippet |
+| `y` | Copy content to clipboard |
+| `t` | Edit tags |
+| `r` | Refresh list |
+| `s`, `/` | Enter search mode |
+| `Enter` | Execute search |
+| `Esc` | Exit search/help/cancel |
+| `?` | Toggle help screen |
+| `q` | Quit |
 
 ---
 
-## 💾 Data Storage
+## CodeWalk — AI Repository Walkthrough
 
-- All snippets stored **locally** in an SQLite database
-- **Primary key:** standard SQLite auto-increment integer (integer type strictly stores numeric values ensuring data integrity [[neon.tech](https://neon.tech/docs/data-types/integer)], [sqlite.org](https://www.sqlite.org/lang_createtable.html))
-- Fast, atomic reads/writes without server setup
-- Supports fuzzy search on both **content and tags**
-- Database optimization commands available
+CodeWalk guides an AI agent through a codebase, producing a structured walkthrough you navigate step by step in the TUI.
 
-### Example DB schema:
+```bash
+gist codewalk [OPTIONS] [PATH]
+```
+
+`PATH` defaults to `.` (current directory).
+
+### Walk modes
+
+| Mode | Flag | Focus |
+|------|------|-------|
+| Onboarding | `--mode onboarding` | Architecture, entry points, data flow — "How does this work?" |
+| Review | `--mode review` | Recent changes, commit context — "What changed?" |
+| Audit | `--mode audit` | Tech debt, error handling, code quality — "What could fail?" |
+| Security | `--mode security` | Input validation, auth, secrets, OWASP patterns — "What are the risks?" |
+| Deep Audit | `--mode deep-audit` | Parallel per-module sub-agents with budget controls — structured audit report |
+
+### Common flags
+
+```bash
+# Specify what to explore
+gist codewalk --scope "Trace the auth flow" --mode security .
+
+# Choose a model (overrides config)
+gist codewalk --model "openai/gpt-4o" .
+
+# Export session to Markdown when done
+gist codewalk --output report.md .
+
+# Custom system prompt file
+gist codewalk --prompt my-prompt.txt .
+
+# Load pre-existing tech debt notes
+gist codewalk --notes debt.md .
+```
+
+### Session management
+
+Sessions are saved automatically to `~/.config/gist/sessions/` after each step.
+
+```bash
+# List saved sessions
+gist codewalk --list-sessions
+
+# Resume a previous session by ID
+gist codewalk --resume <session-id>
+
+# Delete all saved sessions
+gist codewalk --purge-sessions
+```
+
+### Deep Audit mode
+
+`--mode deep-audit` runs a parallel sub-agent audit across all key modules identified by the recon agent. Each sub-agent gets its own budget slice and produces findings, risks, and `file:line` references. Results are pre-loaded into the TUI before it starts.
+
+Budget limits (configurable in `~/.config/gist/config.toml`):
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `max_tokens` | 100,000 | Total token budget across all sub-agents |
+| `max_tool_calls` | 200 | Maximum tool calls across all sub-agents |
+| `max_wall_seconds` | 300 | Wall-clock time limit (seconds) |
+| `max_subagents` | 4 | Maximum concurrent sub-agents |
+
+The `--output` flag in deep-audit mode produces a structured Markdown report with:
+- Executive summary (module count, finding count, risk count)
+- Per-module findings, risks, and file references
+- Consolidated risk register
+- All file:line references
+- Git HEAD SHA and elapsed time
+
+### Meerkat agent flags (requires `--features meerkat`)
+
+```bash
+# Skip the recon agent (use legacy single-prompt behavior)
+gist codewalk --no-meerkat .
+
+# Run the raw Meerkat integration spike (diagnostic)
+gist codewalk --meerkat-spike .
+```
+
+### CodeWalk TUI controls
+
+| Key | Action |
+|-----|--------|
+| `n`, `→` | Next step |
+| `p`, `←` | Previous step |
+| `d` | Trigger a deep dive on a suggested topic |
+| `t` | Add a tech debt note for the current file |
+| `e` | Export session to Markdown |
+| `q` | Quit CodeWalk |
+
+---
+
+## Configuration
+
+Config is stored at `~/.config/gist/config.toml` and created automatically on first run.
+
+```bash
+# View current config
+gist config --show
+
+# Set preferred editor
+gist config --editor "code -w"
+
+# Set theme (dark | light | system)
+gist config --theme dark
+
+# Enable/disable AI auto-tagging
+gist config --auto-tags false
+
+# Set OpenRouter API key
+gist config --api-key "sk-or-..."
+
+# Set AI model for tagging
+gist config --ai-model "openai/gpt-4o-mini"
+
+# Set API base URL (defaults to OpenRouter)
+gist config --ai-base-url "https://openrouter.ai/api/v1"
+```
+
+### Full config.toml reference
+
+```toml
+editor = ""                          # empty = auto-detect (nvim > vim > nano)
+default_tags = ["snippet"]
+theme = "Dark"                       # Dark | Light | System
+auto_generate_tags = true
+tag_api_key = "sk-or-..."           # OpenRouter key
+ai_model = "z-ai/glm-5-turbo"
+ai_base_url = "https://openrouter.ai/api/v1"
+anthropic_api_key = ""              # Optional: direct Anthropic key for CodeWalk
+
+[codewalk]
+enable_memory = true
+compaction_threshold = 50           # Conversation turns before compaction
+session_retention_days = 30
+max_tokens = 100000                 # Deep-audit token budget
+max_tool_calls = 200                # Deep-audit tool call budget
+max_wall_seconds = 300              # Deep-audit time limit
+max_subagents = 4                   # Deep-audit concurrency
+```
+
+---
+
+## AI Setup
+
+CodeWalk and auto-tagging both use OpenRouter by default.
+
+1. Sign up at [openrouter.ai](https://openrouter.ai) and generate an API key
+2. Set it via config:
+   ```bash
+   gist config --api-key "sk-or-your-key-here"
+   ```
+   Or as an environment variable:
+   ```bash
+   export OPENROUTER_API_KEY=sk-or-your-key-here
+   ```
+3. Optionally choose a model:
+   ```bash
+   gist config --ai-model "anthropic/claude-3.5-sonnet"
+   ```
+
+If no key is set, tagging falls back to default tags. CodeWalk requires an API key.
+
+---
+
+## Data Storage
+
+| Path | Contents |
+|------|----------|
+| `~/.config/gist/gists.db` | SQLite snippet database |
+| `~/.config/gist/config.toml` | Application configuration |
+| `~/.config/gist/sessions/` | CodeWalk session files (JSON) |
+
+The database schema:
 
 ```sql
 CREATE TABLE IF NOT EXISTS gists (
@@ -147,144 +331,53 @@ CREATE TABLE IF NOT EXISTS gists (
 
 ---
 
-## 📱 Terminal UI
+## Tech Stack
 
-The interactive TUI mode offers a powerful interface for managing your snippets:
-
-- Two-panel layout with list and content views
-- Vim-style navigation (j/k) and arrow keys
-- Tab key to switch between panels
-- Live search filtering
-- Tag editing directly in the UI
-- Clipboard integration
-- Full keyboard shortcut help screen (press ?)
-
-### Keyboard Shortcuts:
-
-```
-Navigation:
-  ↑/↓, j/k     - Move selection up/down
-  PgUp/PgDown  - Move by page
-  Home/End     - Jump to start/end
-  Tab          - Switch between list and content panels
-
-Actions:
-  a            - Add new snippet
-  e            - Edit selected snippet
-  d            - Delete selected snippet (with confirmation)
-  y            - Copy snippet content to clipboard
-  t            - Edit tags for the selected snippet
-  r            - Refresh snippet list
-
-Search:
-  s, /         - Start search mode
-  Esc          - Exit search/help mode or cancel action
-  Enter        - Execute search
-
-UI:
-  ?            - Toggle help screen
-  q            - Quit (with confirmation if changes)
-```
+| Library | Purpose |
+|---------|---------|
+| [clap](https://crates.io/crates/clap) | CLI argument parsing |
+| [rusqlite](https://crates.io/crates/rusqlite) | SQLite storage |
+| [ratatui](https://crates.io/crates/ratatui) + [crossterm](https://crates.io/crates/crossterm) | Terminal UI |
+| [tokio](https://crates.io/crates/tokio) | Async runtime |
+| [reqwest](https://crates.io/crates/reqwest) | HTTP client |
+| [serde](https://crates.io/crates/serde) + [toml](https://crates.io/crates/toml) | Config serialization |
+| [syntect](https://crates.io/crates/syntect) | Syntax highlighting |
+| [chrono](https://crates.io/crates/chrono) | Timestamps |
+| [dirs](https://crates.io/crates/dirs) | Standard config paths |
+| [tempfile](https://crates.io/crates/tempfile) | Editor temp files |
+| [meerkat](https://crates.io/crates/meerkat) *(optional)* | Agent framework for CodeWalk recon + deep-audit |
+| [glob](https://crates.io/crates/glob) *(optional)* | File pattern matching for recon agent |
 
 ---
 
-## ⚙️ Configuration
-
-Customize your Gist CLI experience with the configuration system:
+## Development
 
 ```bash
-# View current configuration
-gist config --show
+# Run tests (base)
+cargo test
 
-# Set preferred editor
-gist config --editor "code -w"
+# Run tests with Meerkat agent support
+cargo test --features meerkat
 
-# Choose theme
-gist config --theme light  # Options: dark, light, system
+# Format
+cargo fmt
 
-# Enable/disable auto-tag generation
-gist config --auto-tags false
-
-# Set API key for tag generation
-gist config --api-key "your_api_key"
-```
-
-The configuration is stored in `~/.config/gist/config.json` and is loaded automatically when the application starts.
-
----
-
-## 🔧 Implementation notes
-
-- Rust with performance and safety
-- **SQLite** for embedded zero-config storage
-- Async **Tokio** + **Reqwest** for non-blocking network
-- Native terminal UI via **Ratatui** with Vim-like navigation (arrows+`j/k`)
-- Thread-based operations for responsive UI
-- Uses **temporary files** with your editor (configurable)
-- Precise error handling and safe concurrency
-- Supports any API-compatible AI provider with minor changes
-- Cross-platform design for Windows, macOS, and Linux
-
----
-
-## 📦 Dependencies
-
-- [clap](https://crates.io/crates/clap) — CLI argument parser
-- [rusqlite](https://crates.io/crates/rusqlite) — SQLite DB
-- [reqwest](https://crates.io/crates/reqwest) — async HTTP
-- [tokio](https://crates.io/crates/tokio) — async runtime
-- [serde](https://crates.io/crates/serde) — JSON handling
-- [tempfile](https://crates.io/crates/tempfile) — secure temp files
-- [ratatui](https://crates.io/crates/ratatui) — terminal UI
-- [crossterm](https://crates.io/crates/crossterm) — terminal control
-- [clipboard](https://crates.io/crates/clipboard) — clipboard access
-- [colored](https://crates.io/crates/colored) — terminal colors
-- [chrono](https://crates.io/crates/chrono) — date/time handling
-- [dirs](https://crates.io/crates/dirs) — standard directories
-
----
-
-## 🖥️ Development
-
-### Requirements
-
-- Latest stable **Rust** (>1.56)
-- SQLite3 installed
-- Optional: OpenRouter API key for tagging
-
-### Build steps
-
-```bash
-cargo build --release
-```
-
-**Run CLI:**
-
-```bash
-target/release/gist ...commands...
+# Lint
+cargo clippy
 ```
 
 ---
 
-## 🤝 Contributing
+## Contributing
 
-Contributions, feature ideas, and PRs **welcome!**
-
-Please:
-
-- Open issues for bugs
-- Fork and PR on GitHub
-- Write clear commit messages
-- Follow Rust formatting (`cargo fmt`)
+- Open issues for bugs or feature requests
+- Fork and submit PRs
+- Follow `cargo fmt` formatting
 - Add tests for new features
-- Update documentation for changes
+- Update this README for user-visible changes
 
 ---
 
-## 📝 License
+## License
 
 [MIT](./LICENSE)
-
----
-
-### Enjoy a **fast, smart, developer-oriented snippet manager** – with blazing terminal UI and AI smarts!
