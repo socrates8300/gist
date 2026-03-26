@@ -10,7 +10,7 @@ pub struct CodewalkConfig {
     pub compaction_threshold: usize,
     #[serde(default = "default_retention_days")]
     pub session_retention_days: u32,
-    // Phase 4: budget controls
+    // Phase 4: budget controls (deep-audit)
     #[serde(default = "default_max_tokens")]
     pub max_tokens: usize,
     #[serde(default = "default_max_tool_calls")]
@@ -19,6 +19,11 @@ pub struct CodewalkConfig {
     pub max_wall_seconds: u64,
     #[serde(default = "default_max_subagents")]
     pub max_subagents: usize,
+    // Recon agent budget (separate from deep-audit)
+    #[serde(default = "default_recon_max_tool_calls")]
+    pub recon_max_tool_calls: usize,
+    #[serde(default = "default_recon_max_wall_seconds")]
+    pub recon_max_wall_seconds: u64,
 }
 
 fn default_true() -> bool { true }
@@ -28,6 +33,8 @@ fn default_max_tokens() -> usize { 100_000 }
 fn default_max_tool_calls() -> usize { 200 }
 fn default_max_wall_seconds() -> u64 { 300 }
 fn default_max_subagents() -> usize { 4 }
+fn default_recon_max_tool_calls() -> usize { 100 }
+fn default_recon_max_wall_seconds() -> u64 { 300 }
 
 impl Default for CodewalkConfig {
     fn default() -> Self {
@@ -39,6 +46,8 @@ impl Default for CodewalkConfig {
             max_tool_calls: 200,
             max_wall_seconds: 300,
             max_subagents: 4,
+            recon_max_tool_calls: 100,
+            recon_max_wall_seconds: 300,
         }
     }
 }

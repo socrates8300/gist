@@ -30,9 +30,9 @@ use tokio::sync::Mutex;
 use super::meerkat_spike::OpenRouterChatClient;
 use super::types::{ApiConfig, ApiProvider, RepoMap};
 
-/// Hard limits for the recon agent (separate from deep-audit budget).
-const RECON_MAX_TOOL_CALLS: usize = 30;
-const RECON_MAX_WALL_SECS: u64 = 120;
+/// Fallback limits if no config is provided.
+const RECON_DEFAULT_MAX_TOOL_CALLS: usize = 100;
+const RECON_DEFAULT_MAX_WALL_SECS: u64 = 300;
 
 // ── Shell allow-list ──────────────────────────────────────────────────────────
 
@@ -299,6 +299,8 @@ pub async fn run_recon(
     api_config: &ApiConfig,
     repo_path: &std::path::Path,
     max_tokens_per_turn: u32,
+    max_tool_calls: usize,
+    max_wall_secs: u64,
 ) -> Result<RepoMap, Box<dyn std::error::Error>> {
     let (api_key, base_url) = match &api_config.provider {
         ApiProvider::OpenRouter { api_key, base_url } => (api_key.as_str(), base_url.as_str()),
@@ -320,7 +322,7 @@ pub async fn run_recon(
         repo_path: repo_path.to_path_buf(),
         result: Arc::clone(&result_cell),
         tool_calls: Arc::clone(&tool_call_counter),
-        max_tool_calls: RECON_MAX_TOOL_CALLS,
+        max_tool_calls,
     }) as Arc<dyn AgentToolDispatcher>;
 
     let system_prompt = format!(
@@ -348,7 +350,7 @@ pub async fn run_recon(
         .await;
 
     let run_result = tokio::time::timeout(
-        std::time::Duration::from_secs(RECON_MAX_WALL_SECS),
+        std::time::Duration::from_secs(max_wall_secs),
         agent.run(ContentInput::Text(
             "Map this repository. Use the tools, then call finish_recon.".to_string(),
         )),
@@ -360,7 +362,7 @@ pub async fn run_recon(
         Ok(Err(e)) => eprintln!("Warning: recon agent error: {e}"),
         Err(_) => eprintln!(
             "Warning: recon timed out after {}s, using partial results.",
-            RECON_MAX_WALL_SECS
+            max_wall_secs
         ),
     }
 
@@ -442,7 +444,7 @@ mod tests {
             repo_path: PathBuf::from("."),
             result: Arc::new(Mutex::new(None)),
             tool_calls: Arc::new(AtomicUsize::new(0)),
-            max_tool_calls: RECON_MAX_TOOL_CALLS,
+            max_tool_calls: RECON_DEFAULT_MAX_TOOL_CALLS,
         };
         let tools = d.tools();
         assert_eq!(tools.len(), 4);

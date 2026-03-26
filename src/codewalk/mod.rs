@@ -71,7 +71,14 @@ pub async fn run_codewalk(
     #[cfg(feature = "meerkat")]
     let repo_map: Option<types::RepoMap> = if !no_meerkat {
         eprintln!("Mapping repository...");
-        match recon::run_recon(&api_config, &repo_path, 4000).await {
+        let cw_cfg = config.codewalk.as_ref().cloned().unwrap_or_default();
+        match recon::run_recon(
+            &api_config,
+            &repo_path,
+            4000,
+            cw_cfg.recon_max_tool_calls,
+            cw_cfg.recon_max_wall_seconds,
+        ).await {
             Ok(map) => {
                 recon::save_recon_log(&map, &repo_path);
                 eprintln!(
