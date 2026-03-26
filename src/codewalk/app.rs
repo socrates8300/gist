@@ -19,6 +19,7 @@ pub enum CWInputMode {
 pub enum CWPanel {
     Code,
     Explanation,
+    TechDebt,
 }
 
 /// Main application state for a CodeWalk session
@@ -44,6 +45,8 @@ pub struct CodeWalkApp {
     pub tech_debt_notes: Vec<TechDebtNote>,
     pub tech_debt_visible: bool,
     pub note_input_buffer: String,
+    pub tech_debt_cursor: usize,
+    pub pending_edit_debt: Option<usize>,
 
     // UI state
     pub mode: CWInputMode,
@@ -94,6 +97,8 @@ impl CodeWalkApp {
             tech_debt_notes: Vec::new(),
             tech_debt_visible: false,
             note_input_buffer: String::new(),
+            tech_debt_cursor: 0,
+            pending_edit_debt: None,
             mode: CWInputMode::WaitingForStep,
             status_message: None,
             search_query: String::new(),
@@ -137,6 +142,8 @@ impl CodeWalkApp {
             tech_debt_notes: session.tech_debt_notes,
             tech_debt_visible: false,
             note_input_buffer: String::new(),
+            tech_debt_cursor: 0,
+            pending_edit_debt: None,
             mode: CWInputMode::Normal,
             status_message: None,
             search_query: String::new(),
@@ -350,12 +357,31 @@ impl CodeWalkApp {
         self.mode = CWInputMode::WaitingForStep;
     }
 
-    /// Toggle panel focus
+    /// Toggle panel focus (cycles Code → Explanation → TechDebt when visible)
     pub fn toggle_panel(&mut self) {
         self.focused_panel = match self.focused_panel {
             CWPanel::Code => CWPanel::Explanation,
-            CWPanel::Explanation => CWPanel::Code,
+            CWPanel::Explanation => {
+                if self.tech_debt_visible && !self.tech_debt_notes.is_empty() {
+                    CWPanel::TechDebt
+                } else {
+                    CWPanel::Code
+                }
+            }
+            CWPanel::TechDebt => CWPanel::Code,
         };
+    }
+
+    /// Clamp tech_debt_cursor after a deletion; returns focus to Explanation if panel empties
+    pub fn clamp_debt_cursor(&mut self) {
+        if self.tech_debt_notes.is_empty() {
+            self.tech_debt_cursor = 0;
+            if self.focused_panel == CWPanel::TechDebt {
+                self.focused_panel = CWPanel::Explanation;
+            }
+        } else {
+            self.tech_debt_cursor = self.tech_debt_cursor.min(self.tech_debt_notes.len() - 1);
+        }
     }
 
     fn reset_scrolls(&mut self) {

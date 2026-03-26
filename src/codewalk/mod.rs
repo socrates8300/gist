@@ -461,9 +461,16 @@ async fn run_event_loop(
             }
         }
 
-        // Launch external editor if 't' was pressed
+        // Launch external editor if 't' was pressed (new note)
         if let Some(prefill) = app.pending_editor_prefill.take() {
             launch_editor_for_note(terminal, app, prefill).await?;
+        }
+
+        // Launch external editor to edit an existing debt note
+        if let Some(idx) = app.pending_edit_debt.take() {
+            if idx < app.tech_debt_notes.len() {
+                edit_debt_note(terminal, app, idx).await?;
+            }
         }
 
         if app.should_quit {
@@ -474,28 +481,16 @@ async fn run_event_loop(
     Ok(())
 }
 
-async fn launch_editor_for_note(
+/// Suspend TUI, open editor with prefill, resume TUI.
+/// Returns `Some(content)` if the user saved a change, `None` if discarded.
+async fn run_editor(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    app: &mut CodeWalkApp,
-    prefill: String,
-) -> Result<(), Box<dyn Error>> {
-    // Capture metadata before suspending TUI
-    let file = app.current_file().unwrap_or("OVERVIEW").to_string();
-    let line_range = app
-        .highlight_range()
-        .map(|(s, e)| format!("{s}-{e}"))
-        .unwrap_or_else(|| "0".to_string());
-
-    // Suspend TUI — give the terminal back to the editor
+    prefill: &str,
+) -> Result<Option<String>, Box<dyn Error>> {
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
 
-    // Write prefill to a temp file
     let tmp = tempfile::NamedTempFile::new()?;
     {
         use std::io::Write as _;
@@ -505,40 +500,70 @@ async fn launch_editor_for_note(
     }
     let tmp_path = tmp.path().to_path_buf();
 
-    // Launch editor (nvim / vim / nano from config)
-    let editor = crate::config::get_editor();
-    let _ = std::process::Command::new(&editor)
+    let _ = std::process::Command::new(crate::config::get_editor())
         .arg(&tmp_path)
         .status();
 
-    // Read back whatever the user saved
-    let note_content = std::fs::read_to_string(&tmp_path).unwrap_or_default();
-    drop(tmp); // delete temp file
+    let content = std::fs::read_to_string(&tmp_path).unwrap_or_default();
+    drop(tmp);
 
-    // Resume TUI
     enable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        EnterAlternateScreen,
-        EnableMouseCapture,
-    )?;
+    execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
     terminal.clear()?;
 
-    // Save if content was changed from the prefill
-    let trimmed = note_content.trim().to_string();
+    let trimmed = content.trim().to_string();
     if trimmed.is_empty() || trimmed == prefill.trim() {
-        app.set_status("Tech debt note discarded".to_string());
+        Ok(None)
     } else {
-        app.tech_debt_notes.push(TechDebtNote {
-            file,
-            line_range,
-            note: trimmed,
-            timestamp: chrono::Local::now().to_rfc3339(),
-        });
-        app.tech_debt_visible = true;
-        app.set_status("Tech debt note saved".to_string());
+        Ok(Some(trimmed))
+    }
+}
+
+async fn launch_editor_for_note(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut CodeWalkApp,
+    prefill: String,
+) -> Result<(), Box<dyn Error>> {
+    let file = app.current_file().unwrap_or("OVERVIEW").to_string();
+    let line_range = app
+        .highlight_range()
+        .map(|(s, e)| format!("{s}-{e}"))
+        .unwrap_or_else(|| "0".to_string());
+
+    match run_editor(terminal, &prefill).await? {
+        Some(note) => {
+            app.tech_debt_notes.push(TechDebtNote {
+                file,
+                line_range,
+                note,
+                timestamp: chrono::Local::now().to_rfc3339(),
+            });
+            app.tech_debt_visible = true;
+            app.set_status("Tech debt note saved".to_string());
+        }
+        None => {
+            app.set_status("Tech debt note discarded".to_string());
+        }
     }
 
+    Ok(())
+}
+
+async fn edit_debt_note(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut CodeWalkApp,
+    index: usize,
+) -> Result<(), Box<dyn Error>> {
+    let prefill = app.tech_debt_notes[index].note.clone();
+    match run_editor(terminal, &prefill).await? {
+        Some(new_content) => {
+            app.tech_debt_notes[index].note = new_content;
+            app.set_status("Tech debt note updated".to_string());
+        }
+        None => {
+            app.set_status("Tech debt note unchanged".to_string());
+        }
+    }
     Ok(())
 }
 
@@ -651,10 +676,12 @@ fn handle_mouse_input(app: &mut CodeWalkApp, kind: MouseEventKind) {
         MouseEventKind::ScrollDown => match app.focused_panel {
             CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_add(3); }
             CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_add(3); }
+            CWPanel::TechDebt => {}
         },
         MouseEventKind::ScrollUp => match app.focused_panel {
             CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_sub(3); }
             CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_sub(3); }
+            CWPanel::TechDebt => {}
         },
         _ => {}
     }
@@ -736,6 +763,33 @@ fn handle_normal_mode(
         // If not 'g', fall through to normal handling
     }
 
+    // Debt panel navigation — intercept before generic key handling
+    if app.focused_panel == CWPanel::TechDebt && !app.tech_debt_notes.is_empty() {
+        match code {
+            KeyCode::Char('j') | KeyCode::Down => {
+                if app.tech_debt_cursor + 1 < app.tech_debt_notes.len() {
+                    app.tech_debt_cursor += 1;
+                }
+                return;
+            }
+            KeyCode::Char('k') | KeyCode::Up => {
+                app.tech_debt_cursor = app.tech_debt_cursor.saturating_sub(1);
+                return;
+            }
+            KeyCode::Enter | KeyCode::Char('e') => {
+                app.pending_edit_debt = Some(app.tech_debt_cursor);
+                return;
+            }
+            KeyCode::Char('x') => {
+                app.tech_debt_notes.remove(app.tech_debt_cursor);
+                app.clamp_debt_cursor();
+                app.set_status("Tech debt note deleted".to_string());
+                return;
+            }
+            _ => {}
+        }
+    }
+
     match code {
         // Step navigation
         KeyCode::Char('n') => {
@@ -767,12 +821,14 @@ fn handle_normal_mode(
             match app.focused_panel {
                 CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_add(1); }
                 CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_add(1); }
+                CWPanel::TechDebt => {}
             }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             match app.focused_panel {
                 CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_sub(1); }
                 CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_sub(1); }
+                CWPanel::TechDebt => {}
             }
         }
         KeyCode::Char('J') => {
@@ -789,6 +845,7 @@ fn handle_normal_mode(
                 CWPanel::Explanation => {
                     app.explanation_scroll = app.explanation_scroll.saturating_add(15);
                 }
+                CWPanel::TechDebt => {}
             }
         }
         KeyCode::Char('u') if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -799,6 +856,7 @@ fn handle_normal_mode(
                 CWPanel::Explanation => {
                     app.explanation_scroll = app.explanation_scroll.saturating_sub(15);
                 }
+                CWPanel::TechDebt => {}
             }
         }
         KeyCode::Tab => {

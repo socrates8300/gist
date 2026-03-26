@@ -277,10 +277,22 @@ fn render_explanation_panel(f: &mut Frame, app: &CodeWalkApp, area: Rect) {
 
 /// Render the tech debt notes panel
 fn render_tech_debt_panel(f: &mut Frame, app: &CodeWalkApp, area: Rect) {
+    let is_focused = app.focused_panel == CWPanel::TechDebt;
+    let border_style = if is_focused {
+        Style::default().fg(Color::Yellow)
+    } else {
+        Style::default().fg(Color::Red)
+    };
+    let title = if is_focused {
+        "TECH DEBT NOTES  j/k navigate  e/Enter edit  x delete"
+    } else {
+        "TECH DEBT NOTES  (Tab to focus)"
+    };
+
     let block = Block::default()
         .borders(Borders::ALL)
-        .title("TECH DEBT NOTES")
-        .border_style(Style::default().fg(Color::Red));
+        .title(title)
+        .border_style(border_style);
 
     let items: Vec<ListItem> = app
         .tech_debt_notes
@@ -294,7 +306,12 @@ fn render_tech_debt_panel(f: &mut Frame, app: &CodeWalkApp, area: Rect) {
                 note.line_range,
                 note.note
             );
-            ListItem::new(text).style(Style::default().fg(Color::White))
+            let style = if is_focused && i == app.tech_debt_cursor {
+                Style::default().fg(Color::Black).bg(Color::Yellow)
+            } else {
+                Style::default().fg(Color::White)
+            };
+            ListItem::new(text).style(style)
         })
         .collect();
 
@@ -374,7 +391,7 @@ fn render_help_overlay(f: &mut Frame, _app: &mut CodeWalkApp) {
         Line::from("  D       List all deep dive topics"),
         Line::from("  y       Yank highlighted code block to clipboard"),
         Line::from("  t       Open NeoVim to write tech debt note (pre-filled with snippet)"),
-        Line::from("  T       Toggle tech debt panel"),
+        Line::from("  T       Toggle tech debt panel (Tab to focus, j/k navigate, e edit, x delete)"),
         Line::from("  s       Search within current file"),
         Line::from("  ?       Toggle this help"),
         Line::from("  q       Quit (with export prompt if --output set)"),
