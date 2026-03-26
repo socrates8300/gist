@@ -230,9 +230,16 @@ gist codewalk --meerkat-spike .
 |-----|--------|
 | `n`, `→` | Next step |
 | `p`, `←` | Previous step |
+| `Tab` | Switch focus between code panel and explanation panel |
+| `j` / `k`, `↑` / `↓` | Scroll focused panel |
+| `Ctrl-d` / `Ctrl-u` | Half-page down/up in focused panel |
+| `J` / `K` | Scroll code panel (regardless of focus) |
 | `d` | Trigger a deep dive on a suggested topic |
 | `t` | Add a tech debt note for the current file |
+| `T` | Toggle tech debt notes panel |
 | `e` | Export session to Markdown |
+| `/` | Search within current file |
+| `?` | Toggle help screen |
 | `q` | Quit CodeWalk |
 
 ---
