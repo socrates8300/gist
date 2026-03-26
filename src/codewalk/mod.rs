@@ -585,7 +585,7 @@ fn handle_key_input(
             }
         }
         CWInputMode::NoteInput => {
-            handle_note_input(app, code);
+            handle_note_input(app, code, modifiers);
         }
         CWInputMode::SearchInFile => {
             handle_search_input(app, code);
@@ -725,8 +725,31 @@ fn handle_normal_mode(
 
         // Tech debt
         KeyCode::Char('t') => {
-            app.note_input_buffer.clear();
+            if let Some((start, end)) = app.highlight_range() {
+                let lines: Vec<&str> = app.current_code().lines().collect();
+                let lo = start.saturating_sub(1);
+                let hi = (end.saturating_sub(1)).min(lines.len().saturating_sub(1));
+                let snippet = lines[lo..=hi].join("\n");
+                app.note_input_buffer = format!("```\n{snippet}\n```\n");
+            } else {
+                app.note_input_buffer.clear();
+            }
             app.mode = CWInputMode::NoteInput;
+        }
+        KeyCode::Char('y') => {
+            use clipboard::ClipboardProvider;
+            if let Some((start, end)) = app.highlight_range() {
+                let lines: Vec<&str> = app.current_code().lines().collect();
+                let lo = start.saturating_sub(1);
+                let hi = (end.saturating_sub(1)).min(lines.len().saturating_sub(1));
+                let snippet = lines[lo..=hi].join("\n");
+                match clipboard::ClipboardContext::new().and_then(|mut ctx| ctx.set_contents(snippet)) {
+                    Ok(_) => app.set_status(format!("Yanked lines {}–{} to clipboard", start, end)),
+                    Err(e) => app.set_status(format!("Clipboard error: {e}")),
+                }
+            } else {
+                app.set_status("No highlighted range to yank".to_string());
+            }
         }
         KeyCode::Char('T') => {
             app.tech_debt_visible = !app.tech_debt_visible;
@@ -752,7 +775,7 @@ fn handle_normal_mode(
     }
 }
 
-fn handle_note_input(app: &mut CodeWalkApp, code: KeyCode) {
+fn handle_note_input(app: &mut CodeWalkApp, code: KeyCode, modifiers: KeyModifiers) {
     match code {
         KeyCode::Enter => {
             let note = app.note_input_buffer.clone();
@@ -770,6 +793,13 @@ fn handle_note_input(app: &mut CodeWalkApp, code: KeyCode) {
         }
         KeyCode::Backspace => {
             app.note_input_buffer.pop();
+        }
+        KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
+            use clipboard::ClipboardProvider;
+            match clipboard::ClipboardContext::new().and_then(|mut ctx| ctx.get_contents()) {
+                Ok(text) => app.note_input_buffer.push_str(&text),
+                Err(e) => app.set_status(format!("Paste error: {e}")),
+            }
         }
         KeyCode::Char(c) => {
             app.note_input_buffer.push(c);
