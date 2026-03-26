@@ -1,0 +1,68 @@
+use serde::{Deserialize, Serialize};
+
+/// Claude's structured step response parsed from the JSON envelope
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudeStepResponse {
+    pub file: String,
+    pub line_start: usize,
+    pub line_end: usize,
+    #[serde(default)]
+    pub explanation: String,
+    #[serde(default)]
+    pub deep_dives: Vec<DeepDiveTag>,
+    pub next_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeepDiveTag {
+    pub id: String,
+    pub label: String,
+}
+
+/// A completed walkthrough step (includes cached file content)
+#[derive(Debug, Clone)]
+pub struct WalkStep {
+    pub index: usize,
+    pub response: ClaudeStepResponse,
+    pub file_content: String,
+    pub is_deep_dive: bool,
+    pub parent_step: Option<usize>,
+}
+
+/// A tech debt note entered by the user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TechDebtNote {
+    pub file: String,
+    pub line_range: String,
+    pub note: String,
+    pub timestamp: String,
+}
+
+/// A message in the Claude conversation history
+#[derive(Debug, Clone)]
+pub struct ConversationMessage {
+    pub role: String,
+    pub content: String,
+}
+
+/// Events received from the streaming API task
+#[derive(Debug)]
+pub enum StreamEvent {
+    Token(String),
+    Done,
+    Error(String),
+}
+
+/// Which API provider to use
+#[derive(Debug, Clone)]
+pub enum ApiProvider {
+    Anthropic { api_key: String },
+    OpenRouter { api_key: String, base_url: String },
+}
+
+/// Full API configuration for a session
+#[derive(Debug, Clone)]
+pub struct ApiConfig {
+    pub provider: ApiProvider,
+    pub model: String,
+}
