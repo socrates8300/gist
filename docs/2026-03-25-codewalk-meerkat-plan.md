@@ -100,11 +100,11 @@ gist codewalk <path> [--mode audit|onboarding|review|security]
 - TUI shows "Building context..." spinner during recon; no user-visible steps yet
 
 **Definition of Done:**
-- [ ] Recon completes in <30s on a repo of ≤50k LOC
-- [ ] `RepoMap` parses without error (structured output validated)
-- [ ] `suggested_walk_order` contains at least the entry point + 3 key modules
-- [ ] Recon agent respects token budget (configurable, default 4k tokens)
-- [ ] Existing `--no-meerkat` flag bypasses recon and uses legacy behavior
+- [x] Recon completes in <30s on a repo of ≤50k LOC
+- [x] `RepoMap` parses without error (structured output validated)
+- [x] `suggested_walk_order` contains at least the entry point + 3 key modules
+- [x] Recon agent respects token budget (configurable, default 4k tokens)
+- [x] Existing `--no-meerkat` flag bypasses recon and uses legacy behavior
 
 **Not in scope:** User interaction during recon, custom prompts, multi-repo support.
 
@@ -222,6 +222,7 @@ These apply to every phase:
 | 2026-03-25 | Recon agent separate from walk agent | Separation of concerns; different tool sets; cheaper model for recon |
 | 2026-03-25 | Implement custom `OpenRouterChatClient` wrapping Chat Completions API | Meerkat's built-in `OpenAiClient` uses `/v1/responses`, not `/v1/chat/completions`; OpenRouter only supports Chat Completions; custom `LlmClient` impl bridges the gap |
 | 2026-03-25 | Phase 0 complete — GLM-5-Turbo tool calls work on OpenRouter | Live spike confirmed: model emitted well-formed tool-call JSON, `read_file` round-trip succeeded, +1MB binary delta (32→33MB). Proceed to Phase 1. |
+| 2026-03-26 | Phase 1 complete — Recon Agent implemented | `src/codewalk/recon.rs` added: 4-tool dispatcher (shell/read_file/glob/finish_recon), shell allow-list, RepoMap capture via Arc<Mutex>. Types in `types.rs`. `--no-meerkat` flag wires legacy bypass. All 10 tests pass. |
 
 ---
 

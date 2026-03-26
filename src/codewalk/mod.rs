@@ -3,6 +3,8 @@ pub mod claude;
 pub mod export;
 #[cfg(feature = "meerkat")]
 pub mod meerkat_spike;
+#[cfg(feature = "meerkat")]
+pub mod recon;
 pub mod prompt;
 pub mod repo;
 pub mod types;
@@ -32,6 +34,7 @@ pub async fn run_codewalk(
     notes_file: Option<PathBuf>,
     output_path: Option<PathBuf>,
     config: Config,
+    no_meerkat: bool,
 ) -> Result<(), Box<dyn Error>> {
     let model = model.unwrap_or_else(|| config.ai_model.clone().unwrap_or_else(|| "z-ai/glm-5-turbo".to_string()));
 
@@ -53,6 +56,31 @@ pub async fn run_codewalk(
         repo_index.file_count,
         repo_index.languages.len()
     );
+
+    // Run recon agent to build a RepoMap before entering the TUI
+    #[cfg(feature = "meerkat")]
+    let repo_map: Option<types::RepoMap> = if !no_meerkat {
+        eprintln!("Mapping repository...");
+        match recon::run_recon(&api_config, &repo_path, 4000).await {
+            Ok(map) => {
+                recon::save_recon_log(&map, &repo_path);
+                eprintln!(
+                    "Repository mapped ({} modules, {} entry points)",
+                    map.key_modules.len(),
+                    map.entry_points.len()
+                );
+                Some(map)
+            }
+            Err(e) => {
+                eprintln!("Warning: recon failed ({e}), continuing without repo map.");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    #[cfg(not(feature = "meerkat"))]
+    let repo_map: Option<types::RepoMap> = None;
 
     // Load system prompt
     let system_prompt = load_system_prompt(prompt_file.as_deref());
@@ -79,7 +107,7 @@ pub async fn run_codewalk(
     let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<StreamEvent>();
 
     // Send initial message to Claude
-    let init_message = build_init_message(&scope, &repo_summary);
+    let init_message = build_init_message(&scope, &repo_summary, repo_map.as_ref());
     app.push_message("user", init_message.clone());
     app.start_streaming();
     app.set_status("Requesting architectural overview...".to_string());

@@ -168,6 +168,11 @@ enum Commands {
         #[cfg(feature = "meerkat")]
         #[arg(long)]
         meerkat_spike: bool,
+
+        /// Skip recon agent and use legacy single-prompt behavior
+        #[cfg(feature = "meerkat")]
+        #[arg(long)]
+        no_meerkat: bool,
     },
 }
 
@@ -570,7 +575,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         },
 
-        Commands::Codewalk { scope, model, prompt, notes, output, path, #[cfg(feature = "meerkat")] meerkat_spike } => {
+        Commands::Codewalk { scope, model, prompt, notes, output, path, #[cfg(feature = "meerkat")] meerkat_spike, #[cfg(feature = "meerkat")] no_meerkat } => {
             if !path.exists() || !path.is_dir() {
                 eprintln!("{} Repository path does not exist or is not a directory: {:?}", "Error:".red().bold(), path);
                 return Ok(());
@@ -589,6 +594,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 return Ok(());
             }
 
+            #[cfg(feature = "meerkat")]
+            let no_meerkat_val = no_meerkat;
+            #[cfg(not(feature = "meerkat"))]
+            let no_meerkat_val = false;
+
             if let Err(e) = codewalk::run_codewalk(
                 scope,
                 path,
@@ -597,6 +607,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 notes,
                 output,
                 config,
+                no_meerkat_val,
             ).await {
                 eprintln!("{} {}", "CodeWalk error:".red().bold(), e);
             }

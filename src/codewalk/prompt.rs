@@ -51,12 +51,30 @@ pub fn load_system_prompt(prompt_path: Option<&Path>) -> String {
     default_system_prompt()
 }
 
-/// Build the initial user message with scope and repo context
-pub fn build_init_message(scope: &str, repo_summary: &str) -> String {
-    format!(
-        "## Walkthrough Scope\n\n{}\n\n## Repository Structure\n\n{}\n\nPlease begin with an architectural overview, then guide me through the relevant code for this scope.",
+/// Build the initial user message with scope and repo context.
+/// If a `RepoMap` is provided (from the recon agent), it is injected as context.
+pub fn build_init_message(
+    scope: &str,
+    repo_summary: &str,
+    repo_map: Option<&crate::codewalk::types::RepoMap>,
+) -> String {
+    let mut msg = format!(
+        "## Walkthrough Scope\n\n{}\n\n## Repository Structure\n\n{}",
         scope, repo_summary
-    )
+    );
+
+    if let Some(map) = repo_map {
+        if let Ok(json) = serde_json::to_string_pretty(map) {
+            msg.push_str("\n\n## Repository Map (pre-analyzed)\n\n```json\n");
+            msg.push_str(&json);
+            msg.push_str("\n```\n\nUse `suggested_walk_order` to guide your file selection.");
+        }
+    }
+
+    msg.push_str(
+        "\n\nPlease begin with an architectural overview, then guide me through the relevant code for this scope.",
+    );
+    msg
 }
 
 /// Build a "next step" user message

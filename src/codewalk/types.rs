@@ -66,3 +66,44 @@ pub struct ApiConfig {
     pub provider: ApiProvider,
     pub model: String,
 }
+
+// ── Recon types ───────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RepoMap {
+    pub entry_points: Vec<String>,
+    pub key_modules: Vec<ModuleSummary>,
+    pub dependency_edges: Vec<(String, String)>,
+    pub recent_changes: Vec<CommitSummary>,
+    pub estimated_complexity: Complexity,
+    pub suggested_walk_order: Vec<String>,
+    pub repo_stats: RepoStats,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ModuleSummary {
+    pub path: String,
+    pub purpose: String,
+    pub key_exports: Vec<String>,
+    pub depends_on: Vec<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct CommitSummary {
+    pub hash: String,
+    pub message: String,
+    pub date: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub enum Complexity {
+    Low,
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RepoStats {
+    pub file_count: usize,
+    pub approx_loc: usize,
+}
