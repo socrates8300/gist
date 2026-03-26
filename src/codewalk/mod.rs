@@ -662,11 +662,17 @@ fn handle_normal_mode(
         }
 
         // Scrolling
-        KeyCode::Char('j') => {
-            app.explanation_scroll = app.explanation_scroll.saturating_add(1);
+        KeyCode::Char('j') | KeyCode::Down => {
+            match app.focused_panel {
+                CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_add(1); }
+                CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_add(1); }
+            }
         }
-        KeyCode::Char('k') => {
-            app.explanation_scroll = app.explanation_scroll.saturating_sub(1);
+        KeyCode::Char('k') | KeyCode::Up => {
+            match app.focused_panel {
+                CWPanel::Code => { app.code_scroll = app.code_scroll.saturating_sub(1); }
+                CWPanel::Explanation => { app.explanation_scroll = app.explanation_scroll.saturating_sub(1); }
+            }
         }
         KeyCode::Char('J') => {
             app.code_scroll = app.code_scroll.saturating_add(1);
