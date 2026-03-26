@@ -5,6 +5,7 @@ mod config;
 mod db;
 mod ai;
 mod utils;
+mod codewalk;
 
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -137,6 +138,32 @@ enum Commands {
     
     /// Optimize database
     Optimize,
+
+    /// AI-powered repository walkthrough
+    Codewalk {
+        /// What to explore (e.g., "Trace the auth flow")
+        #[arg(short, long)]
+        scope: String,
+
+        /// Claude model to use
+        #[arg(short, long)]
+        model: Option<String>,
+
+        /// Custom system prompt file
+        #[arg(long)]
+        prompt: Option<PathBuf>,
+
+        /// Load existing tech debt notes
+        #[arg(long)]
+        notes: Option<PathBuf>,
+
+        /// Export session summary to file
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+
+        /// Repository path
+        path: PathBuf,
+    },
 }
 
 fn print_success(message: &str) {
@@ -535,6 +562,25 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 Err(e) => {
                     eprintln!("{} {}", "Error optimizing database:".red().bold(), e);
                 }
+            }
+        },
+
+        Commands::Codewalk { scope, model, prompt, notes, output, path } => {
+            if !path.exists() || !path.is_dir() {
+                eprintln!("{} Repository path does not exist or is not a directory: {:?}", "Error:".red().bold(), path);
+                return Ok(());
+            }
+
+            if let Err(e) = codewalk::run_codewalk(
+                scope,
+                path,
+                model,
+                prompt,
+                notes,
+                output,
+                config,
+            ).await {
+                eprintln!("{} {}", "CodeWalk error:".red().bold(), e);
             }
         },
     }

@@ -11,6 +11,7 @@ pub struct Config {
     pub tag_api_key: Option<String>,
     pub ai_model: Option<String>,
     pub ai_base_url: Option<String>,
+    pub anthropic_api_key: Option<String>,
 }
 
 impl Default for Config {
@@ -23,6 +24,7 @@ impl Default for Config {
             tag_api_key: None,
             ai_model: Some("openai/gpt-4o".to_string()),
             ai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
+            anthropic_api_key: None,
         }
     }
 }
