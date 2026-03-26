@@ -117,6 +117,18 @@ impl AgentToolDispatcher for WalkDispatcher {
     }
 
     async fn dispatch(&self, call: ToolCallView<'_>) -> Result<ToolResult, ToolError> {
+        // Once next_step has fired, reject every subsequent tool call so the
+        // Meerkat agent loop terminates instead of auto-advancing to the next file.
+        if self.step_delivered.load(Ordering::SeqCst) {
+            return Ok(ToolResult::new(
+                call.id.to_string(),
+                "STOP: the step has already been delivered. Do not call any more tools. \
+                 The user will request the next step when they are ready."
+                    .to_string(),
+                true, // is_error — signals the agent to stop
+            ));
+        }
+
         match call.name {
             "read_file" => {
                 #[derive(Deserialize)]
@@ -214,7 +226,9 @@ impl AgentToolDispatcher for WalkDispatcher {
 
                 Ok(ToolResult::new(
                     call.id.to_string(),
-                    "Step delivered to user.".to_string(),
+                    "Step delivered. Your turn is complete — stop here. \
+                     Do NOT call any more tools. The user will request the next step."
+                        .to_string(),
                     false,
                 ))
             }
