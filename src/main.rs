@@ -143,7 +143,7 @@ enum Commands {
     Codewalk {
         /// What to explore (e.g., "Trace the auth flow")
         #[arg(short, long)]
-        scope: String,
+        scope: Option<String>,
 
         /// Claude model to use
         #[arg(short, long)]
@@ -161,7 +161,8 @@ enum Commands {
         #[arg(short, long)]
         output: Option<PathBuf>,
 
-        /// Repository path
+        /// Repository path (defaults to current directory)
+        #[arg(default_value = ".")]
         path: PathBuf,
 
         /// Run Meerkat integration spike (requires --features meerkat)
@@ -177,6 +178,18 @@ enum Commands {
         /// Walk mode: onboarding, review, audit, security
         #[arg(long, default_value = "onboarding")]
         mode: String,
+
+        /// Resume a previous session by ID
+        #[arg(long)]
+        resume: Option<String>,
+
+        /// List saved sessions and exit
+        #[arg(long)]
+        list_sessions: bool,
+
+        /// Delete all saved sessions and exit
+        #[arg(long)]
+        purge_sessions: bool,
     },
 }
 
@@ -579,7 +592,31 @@ async fn main() -> Result<(), Box<dyn Error>> {
             }
         },
 
-        Commands::Codewalk { scope, model, prompt, notes, output, path, #[cfg(feature = "meerkat")] meerkat_spike, #[cfg(feature = "meerkat")] no_meerkat, mode } => {
+        Commands::Codewalk { scope, model, prompt, notes, output, path, #[cfg(feature = "meerkat")] meerkat_spike, #[cfg(feature = "meerkat")] no_meerkat, mode, resume, list_sessions, purge_sessions } => {
+            // --list-sessions: print all saved sessions and exit
+            if list_sessions {
+                let sessions = codewalk::session::list_sessions();
+                if sessions.is_empty() {
+                    println!("No saved sessions.");
+                } else {
+                    println!("{} saved session(s):\n", sessions.len());
+                    for s in &sessions {
+                        println!(
+                            "  {} | {} steps | {} | {} | {}",
+                            s.id, s.step_count, s.mode, s.model, s.repo_path
+                        );
+                    }
+                }
+                return Ok(());
+            }
+
+            // --purge-sessions: delete all saved sessions and exit
+            if purge_sessions {
+                let count = codewalk::session::purge_sessions();
+                println!("Deleted {} session file(s).", count);
+                return Ok(());
+            }
+
             if !path.exists() || !path.is_dir() {
                 eprintln!("{} Repository path does not exist or is not a directory: {:?}", "Error:".red().bold(), path);
                 return Ok(());
@@ -605,6 +642,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             let walk_mode = mode.parse::<codewalk::types::WalkMode>().unwrap_or_default();
 
+            // scope defaults to "General walkthrough" when resuming without explicit scope
+            let scope = scope.unwrap_or_else(|| {
+                if resume.is_some() {
+                    "Continuing walkthrough".to_string()
+                } else {
+                    "General walkthrough".to_string()
+                }
+            });
+
             if let Err(e) = codewalk::run_codewalk(
                 scope,
                 path,
@@ -615,6 +661,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 config,
                 no_meerkat_val,
                 walk_mode,
+                resume,
             ).await {
                 eprintln!("{} {}", "CodeWalk error:".red().bold(), e);
             }

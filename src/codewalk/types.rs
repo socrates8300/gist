@@ -20,7 +20,7 @@ pub struct DeepDiveTag {
 }
 
 /// A completed walkthrough step (includes cached file content)
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WalkStep {
     pub index: usize,
     pub response: ClaudeStepResponse,
@@ -39,7 +39,7 @@ pub struct TechDebtNote {
 }
 
 /// A message in the Claude conversation history
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ConversationMessage {
     pub role: String,
     pub content: String,
@@ -145,4 +145,33 @@ pub enum Complexity {
 pub struct RepoStats {
     pub file_count: usize,
     pub approx_loc: usize,
+}
+
+// ── Session persistence ───────────────────────────────────────────────────────
+
+/// A complete serialized walk session (written to ~/.config/gist/sessions/)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FullSession {
+    pub id: String,
+    pub repo_path: String,
+    pub model: String,
+    pub mode: WalkMode,
+    pub started_at: String,
+    pub last_updated: String,
+    pub steps: Vec<WalkStep>,
+    pub conversation: Vec<ConversationMessage>,
+    pub tech_debt_notes: Vec<TechDebtNote>,
+    pub repo_map: Option<RepoMap>,
+}
+
+/// Lightweight session index entry (for --list-sessions)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionSummary {
+    pub id: String,
+    pub repo_path: String,
+    pub model: String,
+    pub mode: WalkMode,
+    pub started_at: String,
+    pub step_count: usize,
+    pub filename: String,
 }

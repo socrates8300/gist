@@ -9,6 +9,7 @@ pub mod agent;
 pub mod recon;
 pub mod prompt;
 pub mod repo;
+pub mod session;
 pub mod types;
 pub mod ui;
 
@@ -38,6 +39,7 @@ pub async fn run_codewalk(
     config: Config,
     no_meerkat: bool,
     mode: WalkMode,
+    resume_id: Option<String>,
 ) -> Result<(), Box<dyn Error>> {
     let model = model.unwrap_or_else(|| config.ai_model.clone().unwrap_or_else(|| "z-ai/glm-5-turbo".to_string()));
 
@@ -98,8 +100,42 @@ pub async fn run_codewalk(
     #[cfg(not(feature = "meerkat"))]
     let system_prompt = load_system_prompt(prompt_file.as_deref());
 
-    // Initialize app state
-    let mut app = CodeWalkApp::new(scope.clone(), repo_path.clone(), output_path);
+    // Phase 3: compaction threshold from config
+    let compaction_threshold = config
+        .codewalk
+        .as_ref()
+        .map(|c| c.compaction_threshold)
+        .unwrap_or(50_000);
+
+    // Phase 3: retention — purge sessions older than configured threshold
+    {
+        let retention_days = config
+            .codewalk
+            .as_ref()
+            .map(|c| c.session_retention_days)
+            .unwrap_or(30);
+        session::purge_old_sessions(retention_days);
+    }
+
+    // Initialize app state — either fresh or resumed
+    let mut app = if let Some(ref id) = resume_id {
+        match session::load_session(id) {
+            Ok(saved) => {
+                eprintln!("Resuming session '{}' ({} steps)", id, saved.steps.len());
+                let mut a = CodeWalkApp::from_session(saved, output_path);
+                a.scope = scope.clone();
+                a
+            }
+            Err(e) => {
+                eprintln!("Warning: cannot load session '{id}': {e}. Starting fresh.");
+                CodeWalkApp::new(scope.clone(), repo_path.clone(), output_path)
+            }
+        }
+    } else {
+        CodeWalkApp::new(scope.clone(), repo_path.clone(), output_path)
+    };
+
+    app.compaction_threshold = compaction_threshold;
 
     // Configure walk agent settings
     #[cfg(feature = "meerkat")]
@@ -126,24 +162,52 @@ pub async fn run_codewalk(
     // Create streaming channel
     let (stream_tx, mut stream_rx) = mpsc::unbounded_channel::<StreamEvent>();
 
-    // Send initial message to Claude
-    let init_message = build_init_message(&scope, &repo_summary, repo_map.as_ref());
-    app.push_message("user", init_message.clone());
-    app.start_streaming();
-    app.set_status("Requesting architectural overview...".to_string());
-
-    #[cfg(feature = "meerkat")]
-    if app.use_meerkat {
-        agent::spawn_walk_step(
-            api_config.clone(),
-            system_prompt.clone(),
-            app.conversation.clone(),
-            repo_path.clone(),
-            stream_tx.clone(),
-            0,
-            None,
-        );
+    // If resuming, skip the initial request and go straight to the event loop
+    if resume_id.is_some() && !app.steps.is_empty() {
+        app.set_status(format!("Resumed at step {}", app.current_step + 1));
     } else {
+        // Phase 3: inject memory from prior sessions on this repo
+        let prior = session::find_prior_sessions(&repo_path);
+        let enable_memory = config
+            .codewalk
+            .as_ref()
+            .map(|c| c.enable_memory)
+            .unwrap_or(true);
+        let memory_note = if enable_memory && !prior.is_empty() {
+            session::build_memory_note(&prior)
+        } else {
+            String::new()
+        };
+
+        // Send initial message to Claude
+        let mut init_message = build_init_message(&scope, &repo_summary, repo_map.as_ref());
+        if !memory_note.is_empty() {
+            init_message.push_str(&memory_note);
+        }
+        app.push_message("user", init_message.clone());
+        app.start_streaming();
+        app.set_status("Requesting architectural overview...".to_string());
+
+        #[cfg(feature = "meerkat")]
+        if app.use_meerkat {
+            agent::spawn_walk_step(
+                api_config.clone(),
+                system_prompt.clone(),
+                app.conversation.clone(),
+                repo_path.clone(),
+                stream_tx.clone(),
+                0,
+                None,
+            );
+        } else {
+            spawn_stream_request(
+                api_config.clone(),
+                system_prompt.clone(),
+                app.conversation.clone(),
+                stream_tx.clone(),
+            );
+        }
+        #[cfg(not(feature = "meerkat"))]
         spawn_stream_request(
             api_config.clone(),
             system_prompt.clone(),
@@ -151,13 +215,6 @@ pub async fn run_codewalk(
             stream_tx.clone(),
         );
     }
-    #[cfg(not(feature = "meerkat"))]
-    spawn_stream_request(
-        api_config.clone(),
-        system_prompt.clone(),
-        app.conversation.clone(),
-        stream_tx.clone(),
-    );
 
     // Main event loop
     let result = run_event_loop(
@@ -187,33 +244,17 @@ pub async fn run_codewalk(
         eprintln!("Session exported to {}", output_path.display());
     }
 
-    // Auto-save session log to ~/.config/gist/sessions/
+    // Auto-save full session to ~/.config/gist/sessions/
     if !app.steps.is_empty() {
-        let sessions_dir = dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("gist")
-            .join("sessions");
-        let _ = std::fs::create_dir_all(&sessions_dir);
-        let ts = chrono::Local::now().format("%Y%m%d-%H%M%S");
-        let slug = repo_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "repo".to_string());
-        let session_data = serde_json::json!({
-            "repo_path": repo_path.display().to_string(),
-            "model": model_str,
-            "step_count": app.steps.len(),
-            "steps": app.steps.iter().map(|s| serde_json::json!({
-                "file": s.response.file,
-                "line_start": s.response.line_start,
-                "line_end": s.response.line_end,
-                "explanation_preview": s.response.explanation.chars().take(200).collect::<String>(),
-            })).collect::<Vec<_>>(),
-            "timestamp": chrono::Local::now().to_rfc3339(),
-        });
-        let filename = format!("{ts}-{slug}-walk.json");
-        if let Ok(json) = serde_json::to_string_pretty(&session_data) {
-            let _ = std::fs::write(sessions_dir.join(filename), json);
+        let walk_mode = {
+            #[cfg(feature = "meerkat")]
+            { app.walk_mode.clone() }
+            #[cfg(not(feature = "meerkat"))]
+            { types::WalkMode::default() }
+        };
+        match session::save_full_session(&app, &model_str, &walk_mode, repo_map.as_ref()) {
+            Ok(id) => eprintln!("Session saved: {id}"),
+            Err(e) => eprintln!("Warning: could not save session: {e}"),
         }
     }
 
@@ -238,6 +279,13 @@ async fn run_event_loop(
                 }
                 StreamEvent::Done => {
                     finalize_current_step(app, repo_index);
+                    // Phase 3: auto-compaction
+                    if session::compact_conversation(
+                        &mut app.conversation,
+                        app.compaction_threshold,
+                    ) {
+                        app.set_status("Context compacted to stay within token budget.".to_string());
+                    }
                 }
                 StreamEvent::Error(e) => {
                     app.is_streaming = false;

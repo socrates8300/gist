@@ -158,11 +158,11 @@ gist codewalk <path> [--mode audit|onboarding|review|security]
 - Auto-compaction kicks in when session exceeds configurable token threshold
 
 **Definition of Done:**
-- [ ] Session interrupted and resumed at correct step
-- [ ] Second walk on same repo shows "I've seen this codebase before" context
-- [ ] Sessions list shows repo path, date, model, mode, step count
-- [ ] Compaction fires without user-visible interruption on sessions >50 turns
-- [ ] `gist codewalk --purge-sessions` clears all stored sessions
+- [x] Session interrupted and resumed at correct step
+- [x] Second walk on same repo shows "I've seen this codebase before" context
+- [x] Sessions list shows repo path, date, model, mode, step count
+- [x] Compaction fires without user-visible interruption on sessions >50 turns
+- [x] `gist codewalk --purge-sessions` clears all stored sessions
 
 ---
 
@@ -224,6 +224,7 @@ These apply to every phase:
 | 2026-03-25 | Phase 0 complete — GLM-5-Turbo tool calls work on OpenRouter | Live spike confirmed: model emitted well-formed tool-call JSON, `read_file` round-trip succeeded, +1MB binary delta (32→33MB). Proceed to Phase 1. |
 | 2026-03-26 | Phase 1 complete — Recon Agent implemented | `src/codewalk/recon.rs` added: 4-tool dispatcher (shell/read_file/glob/finish_recon), shell allow-list, RepoMap capture via Arc<Mutex>. Types in `types.rs`. `--no-meerkat` flag wires legacy bypass. All 10 tests pass. |
 | 2026-03-26 | Phase 2 complete — Walk Agent implemented | `src/codewalk/agent.rs`: WalkDispatcher with read_file/grep/task_note/next_step tools. `next_step` delivers steps via StreamEvent channel — TUI unchanged. `WalkMode` enum + 4 mode system prompts. `--mode` CLI flag. Ctrl-C graceful shutdown. Session auto-save to ~/.config/gist/sessions/. All 10 tests pass. |
+| 2026-03-26 | Phase 3 complete — Session Persistence & Memory | `src/codewalk/session.rs`: save_full_session/load_session/list_sessions/purge_sessions/purge_old_sessions/find_prior_sessions/compact_conversation. `FullSession`/`SessionSummary` types in types.rs. `CodewalkConfig` in config.rs. `--resume`, `--list-sessions`, `--purge-sessions` CLI flags. Memory injection from prior sessions. Auto-compaction at configurable token threshold. 15 tests pass. |
 
 ---
 

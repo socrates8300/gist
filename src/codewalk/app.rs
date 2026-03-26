@@ -69,6 +69,11 @@ pub struct CodeWalkApp {
     // Walk agent config (Phase 2+)
     pub use_meerkat: bool,
     pub walk_mode: WalkMode,
+
+    // Session persistence (Phase 3)
+    pub session_id: Option<String>,
+    pub started_at: String,
+    pub compaction_threshold: usize,
 }
 
 impl CodeWalkApp {
@@ -99,6 +104,51 @@ impl CodeWalkApp {
             output_path,
             use_meerkat: false,
             walk_mode: WalkMode::default(),
+            session_id: None,
+            started_at: chrono::Local::now().to_rfc3339(),
+            compaction_threshold: 50_000, // ~50k tokens
+        }
+    }
+
+    /// Restore app state from a saved session (for --resume).
+    pub fn from_session(session: crate::codewalk::types::FullSession, output_path: Option<PathBuf>) -> Self {
+        let repo_path = PathBuf::from(&session.repo_path);
+        let mut all_deep_dives = Vec::new();
+        for step in &session.steps {
+            for dd in &step.response.deep_dives {
+                all_deep_dives.push((step.index, dd.clone()));
+            }
+        }
+        let current_step = session.steps.len().saturating_sub(1);
+        Self {
+            steps: session.steps,
+            current_step,
+            focused_panel: CWPanel::Explanation,
+            code_scroll: 0,
+            explanation_scroll: 0,
+            streaming_text: String::new(),
+            is_streaming: false,
+            all_deep_dives,
+            deep_dive_cursor: 0,
+            tech_debt_notes: session.tech_debt_notes,
+            tech_debt_visible: false,
+            note_input_buffer: String::new(),
+            mode: CWInputMode::Normal,
+            status_message: None,
+            search_query: String::new(),
+            search_results: Vec::new(),
+            scope: String::new(),
+            repo_path,
+            conversation: session.conversation,
+            overview_text: String::new(),
+            pending_g: false,
+            should_quit: false,
+            output_path,
+            use_meerkat: false,
+            walk_mode: session.mode,
+            session_id: Some(session.id),
+            started_at: session.started_at,
+            compaction_threshold: 50_000,
         }
     }
 

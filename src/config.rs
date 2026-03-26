@@ -3,6 +3,30 @@ use std::{env, error::Error, fs, path::PathBuf, process::Command};
 use crate::models::Theme;
 
 #[derive(Deserialize, Serialize, Clone)]
+pub struct CodewalkConfig {
+    #[serde(default = "default_true")]
+    pub enable_memory: bool,
+    #[serde(default = "default_compaction_threshold")]
+    pub compaction_threshold: usize,
+    #[serde(default = "default_retention_days")]
+    pub session_retention_days: u32,
+}
+
+fn default_true() -> bool { true }
+fn default_compaction_threshold() -> usize { 50 }
+fn default_retention_days() -> u32 { 30 }
+
+impl Default for CodewalkConfig {
+    fn default() -> Self {
+        Self {
+            enable_memory: true,
+            compaction_threshold: 50,
+            session_retention_days: 30,
+        }
+    }
+}
+
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Config {
     pub editor: String,
     pub default_tags: Vec<String>,
@@ -12,6 +36,8 @@ pub struct Config {
     pub ai_model: Option<String>,
     pub ai_base_url: Option<String>,
     pub anthropic_api_key: Option<String>,
+    #[serde(default)]
+    pub codewalk: Option<CodewalkConfig>,
 }
 
 impl Default for Config {
@@ -25,6 +51,7 @@ impl Default for Config {
             ai_model: Some("z-ai/glm-5-turbo".to_string()),
             ai_base_url: Some("https://openrouter.ai/api/v1".to_string()),
             anthropic_api_key: None,
+            codewalk: None,
         }
     }
 }
