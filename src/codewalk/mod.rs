@@ -832,9 +832,13 @@ fn handle_normal_mode(
                 .unwrap_or_else(|| "no range selected".to_string());
             let snippet = if let Some((start, end)) = app.highlight_range() {
                 let lines: Vec<&str> = app.current_code().lines().collect();
-                let lo = start.saturating_sub(1);
-                let hi = (end.saturating_sub(1)).min(lines.len().saturating_sub(1));
-                lines[lo..=hi].join("\n")
+                if lines.is_empty() {
+                    String::new()
+                } else {
+                    let lo = start.saturating_sub(1).min(lines.len() - 1);
+                    let hi = end.saturating_sub(1).min(lines.len() - 1);
+                    lines[lo..=hi].join("\n")
+                }
             } else {
                 String::new()
             };
@@ -856,9 +860,13 @@ fn handle_normal_mode(
             use clipboard::ClipboardProvider;
             if let Some((start, end)) = app.highlight_range() {
                 let lines: Vec<&str> = app.current_code().lines().collect();
-                let lo = start.saturating_sub(1);
-                let hi = (end.saturating_sub(1)).min(lines.len().saturating_sub(1));
-                let snippet = lines[lo..=hi].join("\n");
+                let snippet = if lines.is_empty() {
+                    String::new()
+                } else {
+                    let lo = start.saturating_sub(1).min(lines.len() - 1);
+                    let hi = end.saturating_sub(1).min(lines.len() - 1);
+                    lines[lo..=hi].join("\n")
+                };
                 match clipboard::ClipboardContext::new().and_then(|mut ctx| ctx.set_contents(snippet)) {
                     Ok(_) => app.set_status(format!("Yanked lines {}–{} to clipboard", start, end)),
                     Err(e) => app.set_status(format!("Clipboard error: {e}")),
