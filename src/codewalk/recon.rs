@@ -8,7 +8,13 @@
 
 #![allow(dead_code)]
 
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
+};
 
 use async_trait::async_trait;
 use meerkat::{
@@ -23,6 +29,10 @@ use tokio::sync::Mutex;
 
 use super::meerkat_spike::OpenRouterChatClient;
 use super::types::{ApiConfig, ApiProvider, RepoMap};
+
+/// Hard limits for the recon agent (separate from deep-audit budget).
+const RECON_MAX_TOOL_CALLS: usize = 30;
+const RECON_MAX_WALL_SECS: u64 = 120;
 
 // ── Shell allow-list ──────────────────────────────────────────────────────────
 
@@ -49,6 +59,8 @@ fn is_shell_command_allowed(cmd: &str) -> bool {
 struct ReconDispatcher {
     repo_path: PathBuf,
     result: Arc<Mutex<Option<RepoMap>>>,
+    tool_calls: Arc<AtomicUsize>,
+    max_tool_calls: usize,
 }
 
 #[async_trait]
@@ -167,6 +179,20 @@ impl AgentToolDispatcher for ReconDispatcher {
     }
 
     async fn dispatch(&self, call: ToolCallView<'_>) -> Result<ToolResult, ToolError> {
+        // Enforce tool-call budget. Always allow finish_recon through.
+        if call.name != "finish_recon" {
+            let prev = self.tool_calls.fetch_add(1, Ordering::SeqCst);
+            if prev >= self.max_tool_calls {
+                return Ok(ToolResult::new(
+                    call.id.to_string(),
+                    "BUDGET_EXCEEDED: tool call limit reached. \
+                     You must call finish_recon immediately with whatever you have gathered so far."
+                        .to_string(),
+                    true,
+                ));
+            }
+        }
+
         match call.name {
             "shell" => {
                 #[derive(Deserialize)]
@@ -289,9 +315,12 @@ pub async fn run_recon(
     let store = Arc::new(StoreAdapter::new(Arc::new(JsonlStore::new(factory.store_path.clone()))));
 
     let result_cell: Arc<Mutex<Option<RepoMap>>> = Arc::new(Mutex::new(None));
+    let tool_call_counter = Arc::new(AtomicUsize::new(0));
     let dispatcher = Arc::new(ReconDispatcher {
         repo_path: repo_path.to_path_buf(),
         result: Arc::clone(&result_cell),
+        tool_calls: Arc::clone(&tool_call_counter),
+        max_tool_calls: RECON_MAX_TOOL_CALLS,
     }) as Arc<dyn AgentToolDispatcher>;
 
     let system_prompt = format!(
@@ -318,11 +347,22 @@ pub async fn run_recon(
         .build(Arc::new(llm), dispatcher, store)
         .await;
 
-    agent
-        .run(ContentInput::Text(
+    let run_result = tokio::time::timeout(
+        std::time::Duration::from_secs(RECON_MAX_WALL_SECS),
+        agent.run(ContentInput::Text(
             "Map this repository. Use the tools, then call finish_recon.".to_string(),
-        ))
-        .await?;
+        )),
+    )
+    .await;
+
+    match run_result {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => eprintln!("Warning: recon agent error: {e}"),
+        Err(_) => eprintln!(
+            "Warning: recon timed out after {}s, using partial results.",
+            RECON_MAX_WALL_SECS
+        ),
+    }
 
     // tmp lives until here — store is valid for the agent run
     drop(tmp);
@@ -401,6 +441,8 @@ mod tests {
         let d = ReconDispatcher {
             repo_path: PathBuf::from("."),
             result: Arc::new(Mutex::new(None)),
+            tool_calls: Arc::new(AtomicUsize::new(0)),
+            max_tool_calls: RECON_MAX_TOOL_CALLS,
         };
         let tools = d.tools();
         assert_eq!(tools.len(), 4);
