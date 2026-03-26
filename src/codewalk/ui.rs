@@ -373,10 +373,9 @@ fn render_help_overlay(f: &mut Frame, _app: &mut CodeWalkApp) {
         Line::from("  d       Deep dive on first available topic"),
         Line::from("  D       List all deep dive topics"),
         Line::from("  y       Yank highlighted code block to clipboard"),
-        Line::from("  t       Open tech debt note (pre-filled with code snippet)"),
+        Line::from("  t       Open NeoVim to write tech debt note (pre-filled with snippet)"),
         Line::from("  T       Toggle tech debt panel"),
         Line::from("  s       Search within current file"),
-        Line::from("  Ctrl-V  Paste clipboard into tech debt note input"),
         Line::from("  ?       Toggle this help"),
         Line::from("  q       Quit (with export prompt if --output set)"),
     ];

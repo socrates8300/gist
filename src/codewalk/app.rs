@@ -63,6 +63,9 @@ pub struct CodeWalkApp {
     // Should quit
     pub should_quit: bool,
 
+    // Pending external editor launch (set by 't' key, consumed by event loop)
+    pub pending_editor_prefill: Option<String>,
+
     // Output path for session export
     pub output_path: Option<PathBuf>,
 
@@ -101,6 +104,7 @@ impl CodeWalkApp {
             overview_text: String::new(),
             pending_g: false,
             should_quit: false,
+            pending_editor_prefill: None,
             output_path,
             use_meerkat: false,
             walk_mode: WalkMode::default(),
@@ -143,6 +147,7 @@ impl CodeWalkApp {
             overview_text: String::new(),
             pending_g: false,
             should_quit: false,
+            pending_editor_prefill: None,
             output_path,
             use_meerkat: false,
             walk_mode: session.mode,

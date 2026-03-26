@@ -28,7 +28,7 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use repo::RepoIndex;
 use std::{error::Error, io, path::PathBuf, time::Duration};
 use tokio::sync::mpsc;
-use types::{StreamEvent, WalkMode};
+use types::{StreamEvent, TechDebtNote, WalkMode};
 
 /// Main entry point for a CodeWalk session
 pub async fn run_codewalk(
@@ -461,9 +461,82 @@ async fn run_event_loop(
             }
         }
 
+        // Launch external editor if 't' was pressed
+        if let Some(prefill) = app.pending_editor_prefill.take() {
+            launch_editor_for_note(terminal, app, prefill).await?;
+        }
+
         if app.should_quit {
             break;
         }
+    }
+
+    Ok(())
+}
+
+async fn launch_editor_for_note(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut CodeWalkApp,
+    prefill: String,
+) -> Result<(), Box<dyn Error>> {
+    // Capture metadata before suspending TUI
+    let file = app.current_file().unwrap_or("OVERVIEW").to_string();
+    let line_range = app
+        .highlight_range()
+        .map(|(s, e)| format!("{s}-{e}"))
+        .unwrap_or_else(|| "0".to_string());
+
+    // Suspend TUI — give the terminal back to the editor
+    disable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        LeaveAlternateScreen,
+        DisableMouseCapture,
+    )?;
+    terminal.show_cursor()?;
+
+    // Write prefill to a temp file
+    let tmp = tempfile::NamedTempFile::new()?;
+    {
+        use std::io::Write as _;
+        let mut f = tmp.reopen()?;
+        f.write_all(prefill.as_bytes())?;
+        f.flush()?;
+    }
+    let tmp_path = tmp.path().to_path_buf();
+
+    // Launch editor (nvim / vim / nano from config)
+    let editor = crate::config::get_editor();
+    let _ = std::process::Command::new(&editor)
+        .arg(&tmp_path)
+        .status();
+
+    // Read back whatever the user saved
+    let note_content = std::fs::read_to_string(&tmp_path).unwrap_or_default();
+    drop(tmp); // delete temp file
+
+    // Resume TUI
+    enable_raw_mode()?;
+    execute!(
+        terminal.backend_mut(),
+        EnterAlternateScreen,
+        EnableMouseCapture,
+    )?;
+    terminal.clear()?;
+
+    // Save if content was changed from the prefill
+    let trimmed = note_content.trim().to_string();
+    if trimmed.is_empty() || trimmed == prefill.trim() {
+        app.set_status("Tech debt note discarded".to_string());
+    } else {
+        app.tech_debt_notes.push(TechDebtNote {
+            file,
+            line_range,
+            note: trimmed,
+            timestamp: chrono::Local::now().to_rfc3339(),
+        });
+        app.tech_debt_visible = true;
+        app.set_status("Tech debt note saved".to_string());
     }
 
     Ok(())
@@ -753,16 +826,31 @@ fn handle_normal_mode(
 
         // Tech debt
         KeyCode::Char('t') => {
-            if let Some((start, end)) = app.highlight_range() {
+            let file = app.current_file().unwrap_or("OVERVIEW").to_string();
+            let line_info = app.highlight_range()
+                .map(|(s, e)| format!("lines {s}-{e}"))
+                .unwrap_or_else(|| "no range selected".to_string());
+            let snippet = if let Some((start, end)) = app.highlight_range() {
                 let lines: Vec<&str> = app.current_code().lines().collect();
                 let lo = start.saturating_sub(1);
                 let hi = (end.saturating_sub(1)).min(lines.len().saturating_sub(1));
-                let snippet = lines[lo..=hi].join("\n");
-                app.note_input_buffer = format!("```\n{snippet}\n```\n");
+                lines[lo..=hi].join("\n")
             } else {
-                app.note_input_buffer.clear();
-            }
-            app.mode = CWInputMode::NoteInput;
+                String::new()
+            };
+            let prefill = if snippet.is_empty() {
+                format!(
+                    "# Tech debt: {file}\n\
+                     # Save and quit (:wq) to record — :q! to discard\n\n"
+                )
+            } else {
+                format!(
+                    "# Tech debt: {file} ({line_info})\n\
+                     # Save and quit (:wq) to record — :q! to discard\n\n\
+                     ```\n{snippet}\n```\n\n"
+                )
+            };
+            app.pending_editor_prefill = Some(prefill);
         }
         KeyCode::Char('y') => {
             use clipboard::ClipboardProvider;
